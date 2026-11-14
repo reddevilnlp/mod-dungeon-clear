@@ -22,11 +22,32 @@
 #include "Ai/Dungeon/DungeonClear/Util/DcRunWing.h"
 #include "Ai/Dungeon/DungeonClear/Util/DungeonClearUtil.h"
 #include "Ai/Dungeon/DungeonClear/Value/DungeonClearStateValues.h"
+#include "Ai/Raid/Naxx40/Naxx40Encounter.h"
 #include "Playerbots.h"
 #include "Ai/Dungeon/DungeonClear/DcValueKeys.h"
 
 namespace
 {
+    bool CanSelectNaxx40Boss(Map const* map, InstanceScript const* instance, uint32 entry)
+    {
+        constexpr uint32 Sapphiron = 351018;
+        constexpr uint32 KelThuzad = 351019;
+        if (!IsNaxx40Map(map) || (entry != Sapphiron && entry != KelThuzad))
+            return true;
+
+        // Individual Progression's instance slots used by the hub portal and the Frostwyrm Waterfall Door.
+        constexpr uint32 LoathebEncounter = 5;
+        constexpr uint32 MaexxnaEncounter = 8;
+        constexpr uint32 ThaddiusEncounter = 9;
+        constexpr uint32 HorsemenEncounter = 12;
+        constexpr uint32 SapphironEncounter = 13;
+        return instance && instance->IsBossDone(LoathebEncounter) &&
+            instance->IsBossDone(MaexxnaEncounter) &&
+            instance->IsBossDone(ThaddiusEncounter) &&
+            instance->IsBossDone(HorsemenEncounter) &&
+            (entry != KelThuzad || instance->IsBossDone(SapphironEncounter));
+    }
+
     // A boss "exists alive" on the current map if any spawned creature with the
     // matching entry is alive. Returns:
     //   present=true,  alive=true   — at least one live instance
@@ -152,7 +173,7 @@ std::optional<DungeonBossInfo> NextDungeonBossValue::Calculate()
             if (info.entry == selectedEntry)
             {
                 bool invalid = false;
-                if (cleared.count(info.entry) || info.skipByDesign)
+                if (cleared.count(info.entry) || info.skipByDesign || !CanSelectNaxx40Boss(map, inst, info.entry))
                     invalid = true;
                 else if (info.kind == DungeonAnchorKind::Boss &&
                          info.encounterIndex < 32 && (completedMask & (1u << info.encounterIndex)))
@@ -169,7 +190,7 @@ std::optional<DungeonBossInfo> NextDungeonBossValue::Calculate()
 
                 if (invalid)
                 {
-                    // Already dead/completed: clear override and drop back to automatic
+                    // Release completed and unavailable overrides so automatic routing can continue.
                     DcRun::Of(context).selectedBossEntry = 0u;
                     break;
                 }
@@ -213,7 +234,7 @@ std::optional<DungeonBossInfo> NextDungeonBossValue::Calculate()
 
         // Authored "present but skipped by design" (vehicle bosses, external
         // set pieces) — same treatment as a player skip, but from data.
-        if (info.skipByDesign)
+        if (info.skipByDesign || !CanSelectNaxx40Boss(map, inst, info.entry))
             continue;
 
         // Travel objective already reached this run (latched on arrival). Its

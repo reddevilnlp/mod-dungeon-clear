@@ -13,10 +13,12 @@
 #include "Ai/Dungeon/DungeonClear/Data/BossSpawnIndex.h"
 #include "Ai/Dungeon/DungeonClear/Data/DcFactionEntrySwapRegistry.h"
 #include "Ai/Dungeon/DungeonClear/Data/DungeonWingRegistry.h"
+#include "Ai/Dungeon/DungeonClear/Data/Events/DungeonRosterBuilders.h"
 #include "Ai/Dungeon/DungeonClear/Overrides/BossRosterRegistry.h"
 #include "Ai/Dungeon/DungeonClear/Util/DcRunWing.h"
 #include "Ai/Dungeon/DungeonClear/Util/DcTargeting.h"
 #include "Ai/Dungeon/DungeonClear/Util/NavmeshSnap.h"
+#include "Ai/Raid/Naxx40/Naxx40Encounter.h"
 #include "Playerbots.h"
 
 namespace
@@ -220,6 +222,22 @@ namespace
     // kill-bit completes the anchor wherever it points.
     constexpr float DC_POOL_SPAWN_MATCH = 10.0f;
 
+    BossRosterPatch const& Naxx40HorsemenRoster()
+    {
+        static BossRosterPatch const patch = []
+        {
+            BossRosterPatch result;
+            result.mapId = 533;
+            // The Four Horsemen row uses spell credit 59450, so BossSpawnIndex has no pull target for it.
+            auto horsemen = DcRoster::MakeBossWithBit(351037, result.mapId, "The Four Horsemen",
+                2519.95f, -2947.47f, 245.64f, 8);
+            horsemen.doneBossStateIndex = 12;
+            result.add.push_back(std::move(horsemen));
+            return result;
+        }();
+        return patch;
+    }
+
     std::vector<DungeonBossInfo> ResolveLiveSpawns(Player* bot, std::vector<DungeonBossInfo> bosses)
     {
         for (DungeonBossInfo& info : bosses)
@@ -258,6 +276,8 @@ namespace
         std::vector<DungeonBossInfo> roster =
             BossRosterRegistry::Apply(mapId, DcDifficulty::Of(map),
                                       BossSpawnIndex::Get(mapId, map->GetDifficulty()));
+        if (IsNaxx40Map(map))
+            roster = BossRosterRegistry::ApplyPatch(Naxx40HorsemenRoster(), std::move(roster));
 
         // Per-team faction reclassification (friendly-faction bosses -> flyby
         // objectives) before wing-filtering and snapping.
