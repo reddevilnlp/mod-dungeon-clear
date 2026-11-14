@@ -13,6 +13,7 @@
 #include "Ai/Dungeon/DungeonClear/Util/DcBossStandDown.h"
 #include "Ai/Dungeon/DungeonClear/Util/DcCombatFlag.h"
 #include "Ai/Dungeon/DungeonClear/Util/DcLeaderSignal.h"
+#include "Ai/Dungeon/DungeonClear/Util/DcNaxx40GluthTransit.h"
 #include "Ai/Dungeon/DungeonClear/Util/DcPartyState.h"
 #include "Ai/Dungeon/DungeonClear/Util/DcPlayerbotCompat.h"
 #include "Ai/Dungeon/DungeonClear/Util/DcPullPlanner.h"
@@ -48,6 +49,12 @@ namespace
         auto const& approach = run.naxx40GrobbulusApproach;
         return instanceId && (run.naxx40Poison.instanceId == instanceId ||
             (approach.instanceId == instanceId && approach.stage != DcRunState::GrobbulusApproach::Stage::Complete));
+    }
+
+    bool GluthTransitControlsRun(Player* owner, PlayerbotAI* ai)
+    {
+        auto const next = ai->GetAiObjectContext()->GetValue<std::optional<DungeonBossInfo>>(DcKey::NextDungeonBoss)->Get();
+        return next && DcNaxx40GluthTransit::BlocksGeneric(owner, next->entry);
     }
 
     // Walk the leader's same-map group into kernel rows and report whether the
@@ -213,7 +220,8 @@ namespace DcStrandedRecovery
 
         // A pause is an intentional hold, not a stall: keep the clock fresh so a
         // long Wait-at-Boss / door pause never makes the run look frozen on resume.
-        if (run.paused || (naxx40 && LivingPoisonControlsRun(*driver.anchor, run)))
+        if (run.paused || (naxx40 && (LivingPoisonControlsRun(*driver.anchor, run) ||
+                                     GluthTransitControlsRun(driver.runOwner, leaderAI))))
         {
             DcRunProgress::Stamp(run.progress, now);
             return false;
@@ -301,6 +309,7 @@ namespace DcStrandedRecovery
         bool const naxx40 = IsNaxx40Map(leader->FindMap());
         DcRunState& run = DcRun::Of(leaderAI);
         if (naxx40 && (run.paused || LivingPoisonControlsRun(*leader, run) ||
+                       GluthTransitControlsRun(driver.runOwner, leaderAI) ||
                        !GetNaxx40Landing(*leader, *leader, lx, ly)))
             return;
 

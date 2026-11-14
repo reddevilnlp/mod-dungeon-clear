@@ -50,6 +50,7 @@
 #include "Ai/Dungeon/DungeonClear/Util/DcDoorPolicy.h"
 #include "Ai/Dungeon/DungeonClear/Util/DcMovement.h"
 #include "Ai/Dungeon/DungeonClear/Util/DcNaxx40SlimeCrossing.h"
+#include "Ai/Dungeon/DungeonClear/Util/DcNaxx40GluthTransit.h"
 #include "Ai/Dungeon/DungeonClear/Util/DcNaxx40LivingPoison.h"
 #include "Ai/Dungeon/DungeonClear/Util/DcNaxx40Patchwerk.h"
 #include "Ai/Dungeon/DungeonClear/Util/DcPathWorker.h"
@@ -2211,6 +2212,10 @@ bool DungeonClearAdvanceAction::Execute(Event event)
             "Can't find a next boss: all remaining bosses are marked dead or skipped — try 'dc bosses' to inspect.");
         return false;
     }
+
+    // The authored transit owns the approach even when it is holding at a checkpoint.
+    if (DcNaxx40GluthTransit::BlocksGeneric(bot, next->entry))
+        return false;
 
     if (PauseForCthun(botAI, *next, event))
         return true;

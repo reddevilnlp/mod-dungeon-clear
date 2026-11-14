@@ -117,6 +117,29 @@ struct DcRunState
         uint32 waves = 0;
     } naxx40GrobbulusApproach;
 
+    struct GluthTransit
+    {
+        struct Member
+        {
+            ObjectGuid guid;
+            std::size_t checkpoint = 0;
+            uint32 lastAttempt = 0;
+            bool dropped = false;
+            bool landed = false;
+        };
+
+        std::vector<Member> members;
+        ObjectGuid group;
+        uint32 instanceId = 0;
+        uint32 lastUpdate = 0;
+        uint32 lastProgress = 0;
+        bool prepared = false;
+        bool throughGas = false;
+        bool stopped = false;
+        bool complete = false;
+    } naxx40GluthTransit;
+    ObjectGuid naxx40GluthTransitOwner;
+
     struct PatchwerkCampRoute
     {
         uint32 instanceId = 0;
@@ -936,6 +959,8 @@ struct DcRunState
     // that is the whole point of resume vs. a fresh `dc on`.
     void OnResume()
     {
+        if (naxx40GluthTransit.stopped)
+            naxx40GluthTransit = {};
         paused = false;
         pauseReason.clear();
         pausedDoor.Clear();

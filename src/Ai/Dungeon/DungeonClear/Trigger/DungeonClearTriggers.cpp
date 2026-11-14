@@ -39,6 +39,7 @@
 #include "Ai/Dungeon/DungeonClear/Util/DcLootPolicy.h"
 #include "Ai/Dungeon/DungeonClear/Data/DcHazardRegistry.h"
 #include "Ai/Dungeon/DungeonClear/Util/DcNaxx40Embalming.h"
+#include "Ai/Dungeon/DungeonClear/Util/DcNaxx40GluthTransit.h"
 #include "Ai/Dungeon/DungeonClear/Util/DcNaxx40LivingPoison.h"
 #include "Ai/Dungeon/DungeonClear/Util/DcNaxx40Patchwerk.h"
 #include "Ai/Dungeon/DungeonClear/Util/DcNoStopZone.h"
@@ -165,7 +166,7 @@ bool DungeonClearIdleTrigger::IsActive()
         return false;
 
     std::optional<DungeonBossInfo> next = AI_VALUE(std::optional<DungeonBossInfo>, DcKey::NextDungeonBoss);
-    if (!next.has_value())
+    if (!next || DcNaxx40GluthTransit::BlocksGeneric(bot, next->entry))
         return false;
 
     // A PULL MANEUVER OWNS THE TANK. Never route it anywhere while the pull FSM
@@ -288,7 +289,8 @@ bool DungeonClearAtBossTrigger::IsActive()
             return false;
         return !DcRaidMuster::Holds(bot, botAI, context, *next);
     }
-    if (DcNaxx40LivingPoison::BlocksGrobbulusPull(botAI, next->entry))
+    if (DcNaxx40GluthTransit::BlocksGeneric(bot, next->entry) ||
+        DcNaxx40LivingPoison::BlocksGrobbulusPull(botAI, next->entry))
         return false;
     if (!DcTickMemoAccess::AtBossEngage(bot, context, *next))
         return false;
@@ -610,7 +612,7 @@ bool DungeonClearBlockingTrashTrigger::IsActive()
         return false;
 
     std::optional<DungeonBossInfo> next = AI_VALUE(std::optional<DungeonBossInfo>, DcKey::NextDungeonBoss);
-    if (!next.has_value())
+    if (!next || DcNaxx40GluthTransit::BlocksGeneric(bot, next->entry))
         return false;
     if (DcNaxx40Patchwerk::SweepInProgress(bot, context, next->entry) ||
         DcNaxx40Patchwerk::ShouldStart(bot, context, next->entry) ||
@@ -1044,6 +1046,9 @@ bool DungeonClearStalledTrigger::IsActive()
     std::string const& reason = AI_VALUE(std::string&, DcKey::StallReason);
     if (reason.empty())
         return false;
+    if (std::optional<DungeonBossInfo> const next = AI_VALUE(std::optional<DungeonBossInfo>, DcKey::NextDungeonBoss);
+        next && DcNaxx40GluthTransit::BlocksGeneric(bot, next->entry))
+        return false;
 
     // Wait between pulls for loot, party catch-up, and rest before pulling
     // anything new — same gating the trash/boss triggers use.
@@ -1078,7 +1083,10 @@ bool DungeonClearDoorBlockedTrigger::IsActive()
     // within the corridor. Empty means clear path. Polled at 500ms by the
     // value itself, so this trigger is cheap.
     ObjectGuid const door = AI_VALUE(ObjectGuid, DcKey::BlockingDoor);
-    return !door.IsEmpty();
+    if (door.IsEmpty())
+        return false;
+    std::optional<DungeonBossInfo> const next = AI_VALUE(std::optional<DungeonBossInfo>, DcKey::NextDungeonBoss);
+    return !next || !DcNaxx40GluthTransit::BlocksGeneric(bot, next->entry);
 }
 
 bool DungeonClearDoorReopenedTrigger::IsActive()
@@ -1363,7 +1371,7 @@ bool DungeonClearPullTrigger::IsActive()
         return false;
 
     std::optional<DungeonBossInfo> next = AI_VALUE(std::optional<DungeonBossInfo>, DcKey::NextDungeonBoss);
-    if (!next.has_value())
+    if (!next || DcNaxx40GluthTransit::BlocksGeneric(bot, next->entry))
         return false;
     bool const patchwerkSweep = DcNaxx40Patchwerk::SweepInProgress(bot, context, next->entry);
     if (patchwerkSweep ? !DcTargeting::IsRoomClearActive(bot, context)

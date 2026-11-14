@@ -69,6 +69,7 @@
 #include "Ai/Dungeon/DungeonClear/Util/DcTankForm.h"
 #include "Ai/Dungeon/DungeonClear/Util/DcTargeting.h"
 #include "Ai/Dungeon/DungeonClear/Util/DcTickMemo.h"
+#include "Ai/Dungeon/DungeonClear/Util/DcNaxx40GluthTransit.h"
 #include "Ai/Dungeon/DungeonClear/Util/DcNaxx40LivingPoison.h"
 #include "Ai/Dungeon/DungeonClear/Util/DcNaxx40Patchwerk.h"
 #include "Ai/Dungeon/DungeonClear/Util/DcWaitAtBossDecision.h"
@@ -687,7 +688,7 @@ bool DungeonClearEngageTrashAction::Execute(Event event)
         return false;
 
     std::optional<DungeonBossInfo> next = AI_VALUE(std::optional<DungeonBossInfo>, DcKey::NextDungeonBoss);
-    if (!next.has_value())
+    if (!next || DcNaxx40GluthTransit::BlocksGeneric(bot, next->entry))
         return false;
 
     if (DcNaxx40Patchwerk::SweepInProgress(bot, context, next->entry) ||
@@ -987,7 +988,8 @@ bool DungeonClearEngageBossAction::Execute(Event event)
     std::optional<DungeonBossInfo> next = AI_VALUE(std::optional<DungeonBossInfo>, DcKey::NextDungeonBoss);
     if (!next.has_value())
         return false;
-    if (DcNaxx40Patchwerk::BlocksBossPull(bot, context, next->entry) ||
+    if (DcNaxx40GluthTransit::BlocksGeneric(bot, next->entry) ||
+        DcNaxx40Patchwerk::BlocksBossPull(bot, context, next->entry) ||
         DcNaxx40LivingPoison::BlocksGrobbulusPull(botAI, next->entry))
         return false;
 
@@ -1315,7 +1317,8 @@ bool DungeonClearRoomPreClearHoldAction::Execute(Event /*event*/)
 bool DungeonClearClearStalledAction::Execute(Event /*event*/)
 {
     if (std::optional<DungeonBossInfo> const next = AI_VALUE(std::optional<DungeonBossInfo>, DcKey::NextDungeonBoss);
-        next && DcNaxx40Patchwerk::UsesPatrolCamp(bot, context, next->entry))
+        next && (DcNaxx40GluthTransit::BlocksGeneric(bot, next->entry) ||
+                 DcNaxx40Patchwerk::UsesPatrolCamp(bot, context, next->entry)))
         return false;
 
     // The stall's own pull is over (DungeonClearMath::StallPullIsDone): clear the
@@ -2874,6 +2877,8 @@ bool DungeonClearRecoverStrandedAction::Execute(Event /*event*/)
 bool DungeonClearDoorBlockedAction::Execute(Event event)
 {
     std::optional<DungeonBossInfo> next = AI_VALUE(std::optional<DungeonBossInfo>, DcKey::NextDungeonBoss);
+    if (next && DcNaxx40GluthTransit::BlocksGeneric(bot, next->entry))
+        return false;
     std::string const target = next.has_value() ? next->name : "the next boss";
     std::string const pauseReason =
         "A door blocks the path to " + target +

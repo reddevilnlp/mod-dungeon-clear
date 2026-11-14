@@ -13,6 +13,7 @@
 #include "Ai/Dungeon/DungeonClear/DcPullContext.h"
 #include "Ai/Dungeon/DungeonClear/Util/DcBossStandDown.h"
 #include "Ai/Dungeon/DungeonClear/Util/DcLeaderSignal.h"
+#include "Ai/Dungeon/DungeonClear/Util/DcNaxx40GluthTransit.h"
 #include "Ai/Dungeon/DungeonClear/Util/DcNaxx40Patchwerk.h"
 #include "Ai/Dungeon/DungeonClear/Util/DcNaxx40LivingPoison.h"
 #include "Ai/Dungeon/DungeonClear/Util/DcNoStopZone.h"
@@ -120,7 +121,10 @@ bool DungeonClearPullModeCurrentValue::Calculate()
     // followers are released and un-passived on the next world update. A veto at
     // the trigger alone would have stopped the NEXT pull and left the raid pinned
     // and passive at the one already standing.
-    if (DungeonEventExecutor::IsPullOwningEventDriving(bot, context) ||
+    auto const next = bot->GetMapId() == 533
+        ? AI_VALUE(std::optional<DungeonBossInfo>, DcKey::NextDungeonBoss) : std::nullopt;
+    if ((pull.phase == DcPullPhase::Idle && next && DcNaxx40GluthTransit::BlocksGeneric(bot, next->entry)) ||
+        DungeonEventExecutor::IsPullOwningEventDriving(bot, context) ||
         DcNoStopZone::IsInNoStopZone(bot, context) ||
         DcBossStandDown::IsActive(bot))
     {
@@ -175,8 +179,6 @@ bool DungeonClearPullModeCurrentValue::Calculate()
     // Leader-only, like the Dynamic governor: a follower's own copy of the bool
     // drives nothing, and writing it there would just add churn.
     bool const isLeader = DcLeaderSignal::IsDungeonClearLeader(bot);
-    auto const next = bot->GetMapId() == 533
-        ? AI_VALUE(std::optional<DungeonBossInfo>, DcKey::NextDungeonBoss) : std::nullopt;
     if (isLeader && (pull.naxx40RangedStand ||
         (next && DcNaxx40Patchwerk::AtEmbalmingHandoff(bot, context, next->entry)) ||
         (next && DcNaxx40Patchwerk::SweepPullCamp(bot, context, next->entry) &&

@@ -49,6 +49,7 @@
 #include "Ai/Dungeon/DungeonClear/Util/DcDoorPolicy.h"
 #include "Ai/Dungeon/DungeonClear/Util/DcMovement.h"
 #include "Ai/Dungeon/DungeonClear/Util/DcNaxx40Embalming.h"
+#include "Ai/Dungeon/DungeonClear/Util/DcNaxx40GluthTransit.h"
 #include "Ai/Dungeon/DungeonClear/Util/DcNaxx40Patchwerk.h"
 #include "Ai/Dungeon/DungeonClear/Util/DcNaxx40LivingPoison.h"
 #include "Ai/Dungeon/DungeonClear/Util/DcRun.h"
@@ -670,6 +671,8 @@ bool DungeonClearPullAction::Execute(Event /*event*/)
     DcLatchRoomCampFight(bot, context, pull);
 
     std::optional<DungeonBossInfo> next = AI_VALUE(std::optional<DungeonBossInfo>, DcKey::NextDungeonBoss);
+    if (phase == DcPullPhase::Idle && next && DcNaxx40GluthTransit::BlocksGeneric(bot, next->entry))
+        return false;
 
     // SOCIAL QUARANTINE upkeep. The advance rung does the same thing, and between
     // them the leader re-asserts it in every state it can be in outside a boss

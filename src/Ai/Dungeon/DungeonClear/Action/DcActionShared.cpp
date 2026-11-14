@@ -61,6 +61,7 @@
 #include "Ai/Dungeon/DungeonClear/Util/DcCombatPurge.h"
 #include "Ai/Dungeon/DungeonClear/Util/DcDoorPolicy.h"
 #include "Ai/Dungeon/DungeonClear/Util/DcMovement.h"
+#include "Ai/Dungeon/DungeonClear/Util/DcNaxx40GluthTransit.h"
 #include "Ai/Dungeon/DungeonClear/Util/DcPathWorker.h"
 #include "Ai/Dungeon/DungeonClear/Util/DcRunWing.h"
 #include "Ai/Dungeon/DungeonClear/Util/DcSocialQuarantine.h"
@@ -539,6 +540,9 @@ namespace DcActionShared
     void EnsureLongPath(Player* bot, AiObjectContext* ctx, DcApproachState& appr,
                         DungeonBossInfo const& target)
     {
+        if (DcNaxx40GluthTransit::BlocksGeneric(bot, target.entry))
+            return;
+
         uint32& cachedEntry = appr.longPathTargetEntry;
         uint32& expiresAt = appr.longPathExpiresMs;
         uint64& pendingJob = appr.pendingPathJob;

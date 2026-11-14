@@ -99,6 +99,7 @@
 #include "Ai/Dungeon/DungeonClear/Data/Events/DungeonEventTables.h"
 #include "Ai/Dungeon/DungeonClear/Util/DcCombatPurge.h"
 #include "Ai/Dungeon/DungeonClear/Util/DcNaxx40LivingPoison.h"
+#include "Ai/Dungeon/DungeonClear/Util/DcNaxx40GluthTransit.h"
 #include "Ai/Dungeon/DungeonClear/Util/DcPathWorker.h"
 #include "Ai/Dungeon/DungeonClear/Util/DcStratTrapAlley.h"
 #include "Ai/Dungeon/DungeonClear/Util/DcFirstContact.h"
@@ -903,6 +904,7 @@ public:
 void AddSC_dungeon_clear_module()
 {
     DcNaxx40LivingPoison::RegisterMapUpdate();
+    DcNaxx40GluthTransit::RegisterMapUpdate();
     new DungeonClearRegistrarWorldScript();
     new DungeonClearLoginPlayerScript();
     new DungeonClearTestRunLootScript();

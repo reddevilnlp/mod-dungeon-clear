@@ -25,6 +25,7 @@
 #include "Ai/Dungeon/DungeonClear/Util/DcFlightLeg.h"
 #include "Ai/Dungeon/DungeonClear/Util/DcLyceumCloseUpDecision.h"
 #include "Ai/Dungeon/DungeonClear/Util/DcNaxx40Embalming.h"
+#include "Ai/Dungeon/DungeonClear/Util/DcNaxx40GluthTransit.h"
 #include "Ai/Dungeon/DungeonClear/Util/DcNaxx40LivingPoison.h"
 #include "Ai/Dungeon/DungeonClear/Util/DcNaxx40Patchwerk.h"
 #include "Ai/Dungeon/DungeonClear/Util/DcNaxx40SlimeCrossing.h"
@@ -111,6 +112,16 @@ static bool InterruptsSlimeEscape(PlayerbotAI& ai, Action* action, std::string c
            (dynamic_cast<MovementAction*>(action) || dynamic_cast<CastReachTargetSpellAction*>(action) ||
             name == "food" || name == "drink" || name == "open loot" || name == "loot") &&
            IsNaxx40SlimeEscapeActive(ai);
+}
+
+static bool InterruptsGluthTransit(PlayerbotAI* ai, Player* bot, Action* action, std::string const& name)
+{
+    if (bot->GetMapId() != 533)
+        return false;
+    if (name == "food" || name == "drink")
+        return DcNaxx40GluthTransit::InGasTransit(ai);
+    return (dynamic_cast<MovementAction*>(action) || dynamic_cast<CastReachTargetSpellAction*>(action) ||
+            name == "open loot" || name == "loot") && DcNaxx40GluthTransit::OwnsMovement(ai);
 }
 
 // A mob already beating on a non-tank party member is peeled at once: the
@@ -352,7 +363,8 @@ float DungeonClearMultiplier::GetValue(Action* action)
 
     std::string const& name = action->getName();
 
-    if (LeavesEmbalmingCamp(botAI, bot, action, name) || LeavesPatchwerkPosition(botAI, bot, action, name) ||
+    if (InterruptsGluthTransit(botAI, bot, action, name) ||
+        LeavesEmbalmingCamp(botAI, bot, action, name) || LeavesPatchwerkPosition(botAI, bot, action, name) ||
         (bot->GetMapId() == 533 && InterruptsSlimeEscape(*botAI, action, name)))
         return 0.0f;
 
@@ -579,7 +591,8 @@ float DungeonClearCombatMultiplier::GetValue(Action* action)
 
     std::string const& name = action->getName();
 
-    if (LeavesEmbalmingCamp(botAI, bot, action, name) || LeavesPatchwerkPosition(botAI, bot, action, name) ||
+    if (InterruptsGluthTransit(botAI, bot, action, name) ||
+        LeavesEmbalmingCamp(botAI, bot, action, name) || LeavesPatchwerkPosition(botAI, bot, action, name) ||
         (bot->GetMapId() == 533 && InterruptsSlimeEscape(*botAI, action, name)))
         return 0.0f;
 
