@@ -1299,6 +1299,18 @@ bool DungeonClearPullAction::Execute(Event /*event*/)
             // out to the boss gets a proportionate watchdog (see DcPullLegTimeoutMs).
             if ((now - since) > DcPullLegTimeoutMs(pull, camp.GetExactDist(trash)))
             {
+                if (pull.naxx40RangedStand && next && DcNaxx40Patchwerk::NoteSweepTagTimeout(bot, context, next->entry))
+                {
+                    DcMovement::StopBot(bot, DcMovement::Stop::HardPin);
+                    DcMovement::ClearMovementWait(bot);
+                    pull.abortTarget.Clear();
+                    DcSetPullPhase(context, DcPullPhase::Idle);
+                    DC_PULL_INFO("[DC:{}] Patchwerk: ranged tag timed out at ({:.1f},{:.1f},{:.1f}), target {} at "
+                                 "{:.1f}yd (LOS {}) -> checking the next dry stand", bot->GetName(),
+                                 bot->GetPositionX(), bot->GetPositionY(), bot->GetPositionZ(),
+                                 trash->GetGUID().ToString(), bot->GetExactDist(trash), bot->IsWithinLOSInMap(trash));
+                    return true;
+                }
                 // Stalled without aggro (e.g. the tag resisted and we never closed).
                 // Hand this pack to the normal walk-in engage so the run never hangs —
                 // which means unlatching a scripted stage too, or "so the run never

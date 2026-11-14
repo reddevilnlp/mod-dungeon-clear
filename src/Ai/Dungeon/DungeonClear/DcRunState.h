@@ -164,6 +164,7 @@ struct DcRunState
         bool reachedCheckpoint = false;
         // A rejoin can walk back to a live pack via the dry spine.
         std::optional<std::size_t> recoveryGoal;
+        std::optional<std::size_t> timedOutNorthCentreStand;
         uint32 nextRecoveryProbe = 0;
         uint32 completedSections = 0;
         std::size_t reportedSection = static_cast<std::size_t>(-1);

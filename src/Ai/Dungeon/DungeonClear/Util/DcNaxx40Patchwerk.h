@@ -45,6 +45,7 @@ namespace DcNaxx40Patchwerk
     void NoteClearedLowerEast(Player* tank, AiObjectContext* context, uint32 bossEntry);
     Creature* FindEmbalmingPull(PlayerbotAI* ai, ObjectGuid excluded);
     std::optional<Position> SweepPullCamp(Player* tank, AiObjectContext* context, uint32 bossEntry);
+    bool NoteSweepTagTimeout(Player* tank, AiObjectContext* context, uint32 bossEntry);
     bool ValidateSweepCamp(Player* tank, AiObjectContext* context, Position const& camp);
     bool DriveSweepReturn(PlayerbotAI* ai, Position const& camp);
     void HoldForEmbalming(PlayerbotAI* ai);

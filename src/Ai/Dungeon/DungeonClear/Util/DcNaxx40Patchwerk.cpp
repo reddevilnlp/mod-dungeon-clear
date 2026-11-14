@@ -305,6 +305,7 @@ namespace
     constexpr std::size_t WestGolemFallback = WestGolemStand + 1;
     constexpr std::size_t WestTrashExit = 12;
     constexpr std::size_t NorthwestFallback = 14;
+    constexpr std::size_t NorthCentreFirstStand = 16;
     constexpr std::size_t RouteSize = WhiteRoute.size();
     constexpr std::size_t CampCheckpoint = RouteSize - 1;
 
@@ -353,6 +354,22 @@ namespace
     bool IsWestGolemCheckpoint(std::size_t checkpoint)
     {
         return checkpoint == WestGolemStand || checkpoint == WestGolemFallback;
+    }
+
+    bool IsNorthCentreStand(std::size_t checkpoint)
+    {
+        return checkpoint >= NorthCentreFirstStand && checkpoint <= Sections[NorthCentre].last;
+    }
+
+    bool NorthCentreStandTimedOut(DcRunState::PatchwerkSweep const& sweep)
+    {
+        return IsNorthCentreStand(sweep.checkpoint) && sweep.timedOutNorthCentreStand &&
+            sweep.checkpoint <= *sweep.timedOutNorthCentreStand;
+    }
+
+    float SweepArrival(DcRunState::PatchwerkSweep const& sweep)
+    {
+        return IsNorthCentreStand(sweep.checkpoint) && sweep.timedOutNorthCentreStand ? 0.75f : Arrive;
     }
 
     bool IsWestGolem(ObjectGuid::LowType spawn)
@@ -644,11 +661,12 @@ namespace
     }
 
     SweepResult MoveToWhiteCheckpoint(PlayerbotAI* ai, std::size_t checkpoint, Checkpoint const& point,
-                                      Creature* avoidBoss = nullptr, bool dryOnly = false, bool recover = false)
+                                      Creature* avoidBoss = nullptr, bool dryOnly = false, bool recover = false,
+                                      float arrival = Arrive)
     {
         Player* const tank = ai->GetBot();
         G3D::Vector3 destination(point.x, point.y, point.z);
-        if (tank->GetExactDist(point.x, point.y, point.z) <= Arrive)
+        if (tank->GetExactDist(point.x, point.y, point.z) <= arrival)
             return SweepResult::Waiting;
 
         if (DcMovement::OwnsRunningEscort(tank))
@@ -675,7 +693,7 @@ namespace
             PathGenerator path(tank);
             if (path.CalculatePath(destination.x, destination.y, destination.z) &&
                 path.GetPathType() == PATHFIND_NORMAL && path.GetPath().size() >= 2 &&
-                (path.GetActualEndPosition() - destination).length() <= Arrive)
+                (path.GetActualEndPosition() - destination).length() <= arrival)
             {
                 points = path.GetPath();
                 points.front() = G3D::Vector3(tank->GetPositionX(), tank->GetPositionY(), tank->GetPositionZ());
@@ -1128,9 +1146,22 @@ std::optional<Position> SweepPullCamp(Player* tank, AiObjectContext* context, ui
     if (!sweep.reachedCheckpoint || sweep.recoveryGoal || sweep.checkpoint >= CampCheckpoint)
         return std::nullopt;
     Checkpoint const& point = RoutePoint(sweep.checkpoint);
-    if (!point.camp || tank->GetExactDist(point.x, point.y, point.z) > Arrive)
+    if (!point.camp || NorthCentreStandTimedOut(sweep) ||
+        tank->GetExactDist(point.x, point.y, point.z) > SweepArrival(sweep))
         return std::nullopt;
     return *point.camp;
+}
+
+bool NoteSweepTagTimeout(Player* tank, AiObjectContext* context, uint32 bossEntry)
+{
+    if (!SweepInProgress(tank, context, bossEntry))
+        return false;
+    auto& sweep = DcRun::Of(context).patchwerkSweep;
+    if (!sweep.reachedCheckpoint || !IsNorthCentreStand(sweep.checkpoint))
+        return false;
+    sweep.timedOutNorthCentreStand = sweep.checkpoint;
+    ResetRouteTargets(context);
+    return true;
 }
 
 bool ValidateSweepCamp(Player* tank, AiObjectContext* context, Position const& camp)
@@ -1500,11 +1531,11 @@ std::vector<ObjectGuid> LocalTrash(Player* tank, AiObjectContext* context)
         return {};
     if (sweep.checkpoint >= CampCheckpoint)
         return AtDryCamp(*tank) ? ReachableSurvivors(*tank, context) : std::vector<ObjectGuid>{};
-    if (!sweep.reachedCheckpoint)
+    if (!sweep.reachedCheckpoint || NorthCentreStandTimedOut(sweep))
         return {};
 
     Checkpoint const& point = RoutePoint(sweep.checkpoint);
-    if (tank->GetExactDist(point.x, point.y, point.z) > Arrive)
+    if (tank->GetExactDist(point.x, point.y, point.z) > SweepArrival(sweep))
         return {};
     if (!point.radius)
         return {};
@@ -1624,7 +1655,9 @@ SweepResult Drive(PlayerbotAI* ai, AiObjectContext* context, uint32 bossEntry)
     Checkpoint const& point = RoutePoint(sweep.checkpoint);
     SectionId const section = SectionFor(sweep.checkpoint);
     ReportSection(*tank, sweep, section);
-    if (sweep.reachedCheckpoint && tank->GetExactDist(point.x, point.y, point.z) > Arrive)
+    float const arrival = SweepArrival(sweep);
+    if (sweep.reachedCheckpoint && !NorthCentreStandTimedOut(sweep) &&
+        tank->GetExactDist(point.x, point.y, point.z) > arrival)
     {
         sweep.reachedCheckpoint = false;
         ResetRouteTargets(context);
@@ -1673,9 +1706,9 @@ SweepResult Drive(PlayerbotAI* ai, AiObjectContext* context, uint32 bossEntry)
     bool const atFarBank = point.crossing && OnFarBank(*tank, sweep.checkpoint);
     if (section >= NorthRoom && !sweep.followerAnchor)
         sweep.followerAnchor = NorthRoomCamp;
-    if (!sweep.reachedCheckpoint && tank->GetExactDist(point.x, point.y, point.z) > Arrive && !atFarBank)
+    if (!sweep.reachedCheckpoint && tank->GetExactDist(point.x, point.y, point.z) > arrival && !atFarBank)
     {
-        SweepResult const movement = MoveToWhiteCheckpoint(ai, sweep.checkpoint, point, boss, false, mayProbe);
+        SweepResult const movement = MoveToWhiteCheckpoint(ai, sweep.checkpoint, point, boss, false, mayProbe, arrival);
         if (movement != SweepResult::Blocked)
             return movement;
         if (mayProbe)
@@ -1717,7 +1750,7 @@ SweepResult Drive(PlayerbotAI* ai, AiObjectContext* context, uint32 bossEntry)
             ResetRouteTargets(context);
         }
         auto const& targets = context->GetValue<std::vector<ObjectGuid>>(DcKey::RoomTrashRemaining)->Get();
-        if (!targets.empty())
+        if (!targets.empty() && !NorthCentreStandTimedOut(sweep))
             return SweepResult::Clearing;
         if (point.patrol && FindLiveSpawn(*tank, point.patrol))
             return HoldRoute(ai, "route waiting " + std::string(Sections[section].name) + ": patrol spawn " +
@@ -1736,8 +1769,12 @@ SweepResult Drive(PlayerbotAI* ai, AiObjectContext* context, uint32 bossEntry)
             bool const live = HasLiveFormation(*tank, point.formation);
             bool const hasFallback = RoutePoint(sweep.checkpoint + 1).formation == point.formation;
             if (live && !hasFallback)
+            {
+                if (NorthCentreStandTimedOut(sweep))
+                    return HoldRoute(ai, "route waiting north-centre: the last safe ranged pull timed out with trash alive.");
                 return HoldRoute(ai, "formation " + std::to_string(point.formation) +
                     " still alive outside its firing position.");
+            }
             if (!live)
                 LOG_INFO("playerbots.dungeonclear", "[DC:{}] Patchwerk: checkpoint {} formation {} clear",
                     tank->GetName(), sweep.checkpoint, point.formation);
