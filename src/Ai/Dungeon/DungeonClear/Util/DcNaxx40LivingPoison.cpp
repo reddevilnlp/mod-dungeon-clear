@@ -332,6 +332,26 @@ namespace
         return false;
     }
 
+    bool CanRejoinGrobbulusFromFarBank(Player* member)
+    {
+        if (!CanMove(member) || IsCrossingLane(member) || DcNaxx40SlimeCrossing::CrossingActive(member))
+            return false;
+
+        G3D::Vector3 const point = Location(member);
+        if (std::abs(point.z - GrobbulusRegroup.z) > 0.6f)
+            return false;
+        if (OnFarBank(member))
+            return point.y <= GrobbulusLanding.y + GrobbulusArrival;
+
+        if (point.x < EastPullCamp.x - 8.0f || point.x > GrobbulusRegroup.x + 8.0f ||
+            point.y < GrobbulusRegroup.y - 20.0f || point.y >= GrobbulusRegroup.y - 8.0f)
+            return false;
+
+        // An earlier engage approach can run past point 1 on this floor.
+        // Admit that position only with a surveyed dry way back to point 1.
+        return !DcNaxx40SlimeCrossing::BuildSurveyedDryLeg(member, GrobbulusRegroup).empty();
+    }
+
     void ChangeGrobbulusStage(DcRunState::GrobbulusApproach& leg, GrobbulusStage stage, uint32 now)
     {
         leg.stage = stage;
@@ -389,6 +409,22 @@ namespace
             setPhase("waiting on the Grobbulus approach");
             LOG_WARN("playerbots.dungeonclear", "[DC:{}] Grobbulus approach blocked at stage {}; {}/{} present, {} arrived",
                      owner->GetName(), static_cast<uint32>(leg.stage), members.size(), leg.members.size(), leg.arrived);
+            if (leg.stage == GrobbulusStage::Muster || leg.stage == GrobbulusStage::Regroup)
+            {
+                auto const& target = leg.stage == GrobbulusStage::Muster ? EastPullCamp : GrobbulusRegroup;
+                for (Player* member : members)
+                {
+                    if (AtDryStop(member, target, 4.0f))
+                        continue;
+                    LOG_WARN("playerbots.dungeonclear",
+                        "[DC:{}] Grobbulus: {} still at ({:.3f},{:.3f},{:.3f}), floor {:.3f}, "
+                        "falling={}, moving={}, controlled={}, selfbot={}",
+                        owner->GetName(), member->GetName(), member->GetPositionX(), member->GetPositionY(),
+                        member->GetPositionZ(), member->GetFloorZ(), member->IsFalling(), member->isMoving(),
+                        static_cast<uint32>(member->GetMotionMaster()->GetMotionSlotType(MOTION_SLOT_CONTROLLED)),
+                        DcPlayerbotCompat::IsSelfBot(member));
+                }
+            }
             return;
         }
         if (members.size() != leg.members.size())
@@ -436,11 +472,12 @@ namespace
                 std::size_t cleared = 0;
                 for (Player* member : members)
                 {
-                    if (IsCrossingLane(member) || !OnFarBank(member))
+                    if (IsCrossingLane(member))
                         continue;
-                    if (HasClearedLanding(member))
+                    if (HasClearedLanding(member) ||
+                        (!OnFarBank(member) && member->movespline->Finalized() && CanRejoinGrobbulusFromFarBank(member)))
                         ++cleared;
-                    else if (member->GetPositionY() > GrobbulusLanding.y + GrobbulusArrival)
+                    else if (OnFarBank(member) && member->GetPositionY() > GrobbulusLanding.y + GrobbulusArrival)
                         MoveToDryStop(member, GrobbulusLanding);
                 }
                 bool const allCrossed = countArrival(cleared);
@@ -466,7 +503,8 @@ namespace
                 {
                     LOG_INFO("playerbots.dungeonclear", "[DC:{}] Grobbulus: {}/{} reached dry landing in {} waves",
                              owner->GetName(), cleared, leg.members.size(), leg.waves);
-                    ChangeGrobbulusStage(leg, GrobbulusStage::Muster, now);
+                    ChangeGrobbulusStage(leg,
+                        EastSpewersAlive(owner) ? GrobbulusStage::Muster : GrobbulusStage::Regroup, now);
                     break;
                 }
                 for (Player* member : members)
@@ -544,16 +582,18 @@ namespace
             return leg.stage != GrobbulusStage::Complete;
 
         bool const fromRefuge = Near(owner, Stops.back(), 6.0f);
+        bool const ownerOnFarBank = !fromRefuge && CanRejoinGrobbulusFromFarBank(owner);
         bool const atCrossing = Near(owner, GrobbulusBankA, 5.0f) || Near(owner, GrobbulusBankB, 5.0f) ||
             Near(owner, GrobbulusLanding, 8.0f) || Near(owner, EastPullCamp, 6.0f) ||
             Near(owner, GrobbulusRegroup, 6.0f);
-        if (!fromRefuge && !atCrossing)
+        if (!fromRefuge && !atCrossing && !ownerOnFarBank)
             return false;
 
         leg = {};
         leg.instanceId = instanceId;
         leg.stage = fromRefuge ? GrobbulusStage::Approach : GrobbulusStage::Crossing;
         leg.lastProgress = getMSTime();
+        bool allOnFarBank = ownerOnFarBank;
         for (GroupReference* ref = owner->GetGroup()->GetFirstMember(); ref; ref = ref->next())
         {
             Player* const candidate = ref->GetSource();
@@ -565,12 +605,26 @@ namespace
             leg.members.push_back(member->GetGUID());
             if (fromRefuge || Near(member, GrobbulusBankA, 5.0f))
                 Hold(member);
+            else if (!member->IsInCombat() && CanMove(member) &&
+                     !IsCrossingLane(member) && !DcNaxx40SlimeCrossing::CrossingActive(member))
+                DcMovement::ResolveEscortConflict(member);
+            if (allOnFarBank && member != owner && !CanRejoinGrobbulusFromFarBank(member))
+                allOnFarBank = false;
         }
         if (leg.members.empty())
         {
             leg = {};
             return false;
         }
+        if (allOnFarBank)
+        {
+            leg.stage = EastSpewersAlive(owner) ? GrobbulusStage::Muster : GrobbulusStage::Regroup;
+            LOG_INFO("playerbots.dungeonclear", "[DC:{}] Grobbulus: resuming on the dry side with {} bots ({})",
+                     owner->GetName(), leg.members.size(),
+                     leg.stage == GrobbulusStage::Muster ? "east pull camp" : "point 1");
+            return true;
+        }
+
         // Get a tank and healer through first, especially when the run owner
         // is a different tank from the group's designated main tank.
         auto priority = [&](ObjectGuid guid)
