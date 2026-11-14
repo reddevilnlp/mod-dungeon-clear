@@ -182,6 +182,25 @@ struct DcRunState
     } naxx40ThaddiusExit;
     ObjectGuid naxx40ThaddiusExitOwner;
 
+    struct Naxx40PortalTransit
+    {
+        struct Member
+        {
+            ObjectGuid guid;
+            uint32 spline = 0;
+            uint32 lastAttempt = 0;
+            bool arrived = false;
+        };
+
+        std::vector<Member> members;
+        ObjectGuid group;
+        uint32 instanceId = 0;
+        uint32 portalEntry = 0;
+        uint32 lastUpdate = 0;
+        uint32 lastProgress = 0;
+    } naxx40PortalTransit;
+    ObjectGuid naxx40PortalOwner;
+
     struct PatchwerkCampRoute
     {
         uint32 instanceId = 0;

@@ -101,6 +101,7 @@
 #include "Ai/Dungeon/DungeonClear/Util/DcNaxx40LivingPoison.h"
 #include "Ai/Dungeon/DungeonClear/Util/DcNaxx40GluthTransit.h"
 #include "Ai/Dungeon/DungeonClear/Util/DcNaxx40Thaddius.h"
+#include "Ai/Dungeon/DungeonClear/Util/DcNaxx40WingPortal.h"
 #include "Ai/Dungeon/DungeonClear/Util/DcPathWorker.h"
 #include "Ai/Dungeon/DungeonClear/Util/DcStratTrapAlley.h"
 #include "Ai/Dungeon/DungeonClear/Util/DcFirstContact.h"
@@ -907,6 +908,7 @@ void AddSC_dungeon_clear_module()
     DcNaxx40LivingPoison::RegisterMapUpdate();
     DcNaxx40GluthTransit::RegisterMapUpdate();
     DcNaxx40Thaddius::RegisterMapUpdate();
+    DcNaxx40WingPortal::RegisterMapUpdate();
     new DungeonClearRegistrarWorldScript();
     new DungeonClearLoginPlayerScript();
     new DungeonClearTestRunLootScript();

@@ -52,6 +52,7 @@
 #include "Ai/Dungeon/DungeonClear/Util/DcNaxx40SlimeCrossing.h"
 #include "Ai/Dungeon/DungeonClear/Util/DcNaxx40GluthTransit.h"
 #include "Ai/Dungeon/DungeonClear/Util/DcNaxx40Thaddius.h"
+#include "Ai/Dungeon/DungeonClear/Util/DcNaxx40WingPortal.h"
 #include "Ai/Dungeon/DungeonClear/Util/DcNaxx40LivingPoison.h"
 #include "Ai/Dungeon/DungeonClear/Util/DcNaxx40Patchwerk.h"
 #include "Ai/Dungeon/DungeonClear/Util/DcPathWorker.h"
@@ -2325,7 +2326,7 @@ bool DungeonClearAdvanceAction::Execute(Event event)
     if (Step s = TryLootYield(st); s != Step::Continue)
         return s == Step::ReturnTrue;
 
-    if (DcNaxx40Thaddius::BeginExit(botAI))
+    if (DcNaxx40Thaddius::BeginExit(botAI) || DcNaxx40WingPortal::Begin(botAI, next->entry))
         return true;
 
     if (DcNaxx40LivingPoison::BeginApproach(botAI, next->entry))
