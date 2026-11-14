@@ -40,6 +40,7 @@
 #include "Ai/Dungeon/DungeonClear/Data/DcHazardRegistry.h"
 #include "Ai/Dungeon/DungeonClear/Util/DcNaxx40Embalming.h"
 #include "Ai/Dungeon/DungeonClear/Util/DcNaxx40GluthTransit.h"
+#include "Ai/Dungeon/DungeonClear/Util/DcNaxx40Thaddius.h"
 #include "Ai/Dungeon/DungeonClear/Util/DcNaxx40LivingPoison.h"
 #include "Ai/Dungeon/DungeonClear/Util/DcNaxx40Patchwerk.h"
 #include "Ai/Dungeon/DungeonClear/Util/DcNoStopZone.h"
@@ -166,7 +167,8 @@ bool DungeonClearIdleTrigger::IsActive()
         return false;
 
     std::optional<DungeonBossInfo> next = AI_VALUE(std::optional<DungeonBossInfo>, DcKey::NextDungeonBoss);
-    if (!next || DcNaxx40GluthTransit::BlocksGeneric(bot, next->entry))
+    if (!next || DcNaxx40GluthTransit::BlocksGeneric(bot, next->entry) ||
+        DcNaxx40Thaddius::BlocksGeneric(bot, next->entry))
         return false;
 
     // A PULL MANEUVER OWNS THE TANK. Never route it anywhere while the pull FSM
@@ -290,6 +292,7 @@ bool DungeonClearAtBossTrigger::IsActive()
         return !DcRaidMuster::Holds(bot, botAI, context, *next);
     }
     if (DcNaxx40GluthTransit::BlocksGeneric(bot, next->entry) ||
+        DcNaxx40Thaddius::BlocksGeneric(bot, next->entry) ||
         DcNaxx40LivingPoison::BlocksGrobbulusPull(botAI, next->entry))
         return false;
     if (!DcTickMemoAccess::AtBossEngage(bot, context, *next))
@@ -1047,7 +1050,8 @@ bool DungeonClearStalledTrigger::IsActive()
     if (reason.empty())
         return false;
     if (std::optional<DungeonBossInfo> const next = AI_VALUE(std::optional<DungeonBossInfo>, DcKey::NextDungeonBoss);
-        next && DcNaxx40GluthTransit::BlocksGeneric(bot, next->entry))
+        next && (DcNaxx40GluthTransit::BlocksGeneric(bot, next->entry) ||
+                 DcNaxx40Thaddius::BlocksGeneric(bot, next->entry)))
         return false;
 
     // Wait between pulls for loot, party catch-up, and rest before pulling
@@ -1086,7 +1090,8 @@ bool DungeonClearDoorBlockedTrigger::IsActive()
     if (door.IsEmpty())
         return false;
     std::optional<DungeonBossInfo> const next = AI_VALUE(std::optional<DungeonBossInfo>, DcKey::NextDungeonBoss);
-    return !next || !DcNaxx40GluthTransit::BlocksGeneric(bot, next->entry);
+    return !next || (!DcNaxx40GluthTransit::BlocksGeneric(bot, next->entry) &&
+                     !DcNaxx40Thaddius::BlocksGeneric(bot, next->entry));
 }
 
 bool DungeonClearDoorReopenedTrigger::IsActive()

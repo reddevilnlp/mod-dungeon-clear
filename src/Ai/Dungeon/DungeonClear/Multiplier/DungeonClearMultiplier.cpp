@@ -26,6 +26,7 @@
 #include "Ai/Dungeon/DungeonClear/Util/DcLyceumCloseUpDecision.h"
 #include "Ai/Dungeon/DungeonClear/Util/DcNaxx40Embalming.h"
 #include "Ai/Dungeon/DungeonClear/Util/DcNaxx40GluthTransit.h"
+#include "Ai/Dungeon/DungeonClear/Util/DcNaxx40Thaddius.h"
 #include "Ai/Dungeon/DungeonClear/Util/DcNaxx40LivingPoison.h"
 #include "Ai/Dungeon/DungeonClear/Util/DcNaxx40Patchwerk.h"
 #include "Ai/Dungeon/DungeonClear/Util/DcNaxx40SlimeCrossing.h"
@@ -366,6 +367,12 @@ float DungeonClearMultiplier::GetValue(Action* action)
     if (InterruptsGluthTransit(botAI, bot, action, name) ||
         LeavesEmbalmingCamp(botAI, bot, action, name) || LeavesPatchwerkPosition(botAI, bot, action, name) ||
         (bot->GetMapId() == 533 && InterruptsSlimeEscape(*botAI, action, name)))
+        return 0.0f;
+
+    if (bot->GetMapId() == 533 &&
+        (dynamic_cast<MovementAction*>(action) || dynamic_cast<CastReachTargetSpellAction*>(action) ||
+         name == "open loot" || name == "loot" || name == "dungeon clear pull" ||
+         name == "dungeon clear recover stranded") && DcNaxx40Thaddius::OwnsMovement(botAI))
         return 0.0f;
 
     if (bot->GetMapId() == 533 && !bot->IsInCombat() && name != "naxx40 leave slime" &&

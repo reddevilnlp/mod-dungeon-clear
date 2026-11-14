@@ -141,6 +141,20 @@ struct DcRunState
     } naxx40GluthTransit;
     ObjectGuid naxx40GluthTransitOwner;
 
+    struct ThaddiusOpening
+    {
+        enum class Phase { Camp, Platforms, Pull };
+        ObjectGuid group;
+        uint32 instanceId = 0;
+        uint32 lastUpdate = 0;
+        uint32 lastReport = 0;
+        Phase phase = Phase::Camp;
+        bool clearingTrash = false;
+    } naxx40ThaddiusOpening;
+    ObjectGuid naxx40ThaddiusOwner;
+    uint32 naxx40ThaddiusSpline = 0;
+    uint32 naxx40ThaddiusLastMove = 0;
+
     struct PatchwerkCampRoute
     {
         uint32 instanceId = 0;

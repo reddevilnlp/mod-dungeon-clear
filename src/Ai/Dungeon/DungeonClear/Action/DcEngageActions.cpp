@@ -70,6 +70,7 @@
 #include "Ai/Dungeon/DungeonClear/Util/DcTargeting.h"
 #include "Ai/Dungeon/DungeonClear/Util/DcTickMemo.h"
 #include "Ai/Dungeon/DungeonClear/Util/DcNaxx40GluthTransit.h"
+#include "Ai/Dungeon/DungeonClear/Util/DcNaxx40Thaddius.h"
 #include "Ai/Dungeon/DungeonClear/Util/DcNaxx40LivingPoison.h"
 #include "Ai/Dungeon/DungeonClear/Util/DcNaxx40Patchwerk.h"
 #include "Ai/Dungeon/DungeonClear/Util/DcWaitAtBossDecision.h"
@@ -989,6 +990,7 @@ bool DungeonClearEngageBossAction::Execute(Event event)
     if (!next.has_value())
         return false;
     if (DcNaxx40GluthTransit::BlocksGeneric(bot, next->entry) ||
+        DcNaxx40Thaddius::BlocksGeneric(bot, next->entry) ||
         DcNaxx40Patchwerk::BlocksBossPull(bot, context, next->entry) ||
         DcNaxx40LivingPoison::BlocksGrobbulusPull(botAI, next->entry))
         return false;
@@ -1318,6 +1320,7 @@ bool DungeonClearClearStalledAction::Execute(Event /*event*/)
 {
     if (std::optional<DungeonBossInfo> const next = AI_VALUE(std::optional<DungeonBossInfo>, DcKey::NextDungeonBoss);
         next && (DcNaxx40GluthTransit::BlocksGeneric(bot, next->entry) ||
+                 DcNaxx40Thaddius::BlocksGeneric(bot, next->entry) ||
                  DcNaxx40Patchwerk::UsesPatrolCamp(bot, context, next->entry)))
         return false;
 
@@ -2877,7 +2880,8 @@ bool DungeonClearRecoverStrandedAction::Execute(Event /*event*/)
 bool DungeonClearDoorBlockedAction::Execute(Event event)
 {
     std::optional<DungeonBossInfo> next = AI_VALUE(std::optional<DungeonBossInfo>, DcKey::NextDungeonBoss);
-    if (next && DcNaxx40GluthTransit::BlocksGeneric(bot, next->entry))
+    if (next && (DcNaxx40GluthTransit::BlocksGeneric(bot, next->entry) ||
+                 DcNaxx40Thaddius::BlocksGeneric(bot, next->entry)))
         return false;
     std::string const target = next.has_value() ? next->name : "the next boss";
     std::string const pauseReason =

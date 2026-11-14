@@ -51,6 +51,7 @@
 #include "Ai/Dungeon/DungeonClear/Util/DcMovement.h"
 #include "Ai/Dungeon/DungeonClear/Util/DcNaxx40SlimeCrossing.h"
 #include "Ai/Dungeon/DungeonClear/Util/DcNaxx40GluthTransit.h"
+#include "Ai/Dungeon/DungeonClear/Util/DcNaxx40Thaddius.h"
 #include "Ai/Dungeon/DungeonClear/Util/DcNaxx40LivingPoison.h"
 #include "Ai/Dungeon/DungeonClear/Util/DcNaxx40Patchwerk.h"
 #include "Ai/Dungeon/DungeonClear/Util/DcPathWorker.h"
@@ -2214,7 +2215,7 @@ bool DungeonClearAdvanceAction::Execute(Event event)
     }
 
     // The authored transit owns the approach even when it is holding at a checkpoint.
-    if (DcNaxx40GluthTransit::BlocksGeneric(bot, next->entry))
+    if (DcNaxx40GluthTransit::BlocksGeneric(bot, next->entry) || DcNaxx40Thaddius::BlocksGeneric(bot, next->entry))
         return false;
 
     if (PauseForCthun(botAI, *next, event))
