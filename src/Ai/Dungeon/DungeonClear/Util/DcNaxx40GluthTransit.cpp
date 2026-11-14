@@ -78,6 +78,25 @@ namespace
         return (Location(player) - point).squaredLength() <= radius * radius;
     }
 
+    bool AtDropApproach(Player const& player)
+    {
+        G3D::Vector3 const offset = Location(player) - Route.back();
+        G3D::Vector3 const leg = OverRoom - Route.back();
+        float const along = std::clamp(offset.dot(leg) / leg.squaredLength(), 0.0f, 1.0f);
+        return (offset - leg * along).squaredLength() <= 0.5f * 0.5f;
+    }
+
+    bool AtGasTunnel(Player const& player)
+    {
+        if (player.GetPositionZ() < 313.0f)
+            return false;
+        G3D::Vector3 const offset = Location(player) - Route[TunnelExit - 1];
+        G3D::Vector3 const tunnel = Route.back() - Route[TunnelExit - 1];
+        float const along = offset.dot(tunnel) / tunnel.squaredLength();
+        return (along >= 0.0f && along <= 1.0f && (offset - tunnel * along).length() < 8.0f) ||
+            AtDropApproach(player);
+    }
+
     bool AtRoom(Player const& player)
     {
         return player.GetPositionZ() >= 296.0f && player.GetPositionZ() <= RoomTop &&
@@ -200,7 +219,8 @@ namespace
             record.dropped = Falling(bot);
             return;
         }
-        if (!Near(bot, Route.back(), 0.65f) || !ClearLine(bot, start, OverRoom, 0.08f) ||
+        if ((!Near(bot, Route.back(), 0.65f) && !AtDropApproach(bot)) ||
+            !ClearLine(bot, start, OverRoom, 0.08f) ||
             !ClearLine(bot, start, OverRoom, bot.GetCollisionHeight()))
             return;
         Movement::MoveSplineInit glide(&bot);
@@ -213,18 +233,14 @@ namespace
     {
         if (AtGrobbulus(bot))
             return 0;
-        if (Near(bot, OverRoom, 0.3f))
+        if (AtDropApproach(bot))
             return Route.size();
         if (Near(bot, Route[0], 3.0f))
             return 0;
+        if (AtGasTunnel(bot))
+            return TunnelExit;
         if (bot.GetPositionZ() >= 313.0f)
         {
-            // Distinguish the gas tunnel from the upper ramp, which shares its elevation.
-            G3D::Vector3 const origin = Location(bot) - Route[6];
-            G3D::Vector3 const tunnel = Route.back() - Route[6];
-            float const along = origin.dot(tunnel) / tunnel.squaredLength();
-            if (along >= 0.0f && along <= 1.02f && (origin - tunnel * along).length() < 8.0f)
-                return TunnelExit;
             if (Near(bot, Route[TunnelMuster], 20.0f))
                 return TunnelMuster;
         }
@@ -302,7 +318,13 @@ namespace
             return;
         transit.lastUpdate = now;
         bool const fightStarted = gluth == IN_PROGRESS;
-        if (!transit.throughGas && !fightStarted && owner.IsInCombat())
+        bool const resumeInTunnel = !transit.throughGas &&
+            std::ranges::any_of(transit.members, [&](Transit::Member const& record)
+            {
+                Player const* member = GetMember(owner, record.guid);
+                return member && member->IsAlive() && AtGasTunnel(*member);
+            });
+        if (!transit.throughGas && !fightStarted && !resumeInTunnel && owner.IsInCombat())
         {
             transit.lastProgress = now;
             return;
@@ -312,11 +334,7 @@ namespace
             Player* member = GetMember(owner, record.guid);
             return member && member->IsAlive() && record.checkpoint > 0 && record.checkpoint <= Route.size();
         });
-        bool const startingInTunnel = std::ranges::any_of(transit.members, [](Transit::Member const& member)
-        {
-            return member.checkpoint >= TunnelExit && member.checkpoint <= Route.size();
-        });
-        if (gathered && !transit.prepared && !fightStarted && !startingInTunnel && next)
+        if (gathered && !transit.prepared && !fightStarted && !resumeInTunnel && next)
         {
             DcActionShared::SetPhase(context, "preparing for Gluth before the pipe");
             DcActionShared::IsBetweenPullsReady(&owner, context);
@@ -325,7 +343,7 @@ namespace
                 return;
             transit.prepared = true;
         }
-        if (fightStarted || startingInTunnel)
+        if (fightStarted || resumeInTunnel)
             transit.prepared = true;
 
         bool const staged = gathered && std::ranges::all_of(transit.members, [&](Transit::Member const& record)
@@ -334,10 +352,11 @@ namespace
             return record.checkpoint > TunnelMuster ||
                 (record.checkpoint == TunnelMuster && Near(*member, Route[TunnelMuster], 2.0f));
         });
-        if (!transit.throughGas && (staged || fightStarted || startingInTunnel))
+        if (!transit.throughGas && (staged || fightStarted || resumeInTunnel))
         {
             transit.throughGas = true;
-            LOG_INFO("playerbots.dungeonclear", "[DC:{}] Gluth transit entering Toxic Tunnel", owner.GetName());
+            LOG_INFO("playerbots.dungeonclear", "[DC:{}] Gluth transit {} Toxic Tunnel",
+                owner.GetName(), resumeInTunnel ? "resuming inside" : "entering");
         }
         bool tankAcrossLip = fightStarted;
         std::size_t landed = 0;
@@ -371,8 +390,15 @@ namespace
                 record.checkpoint = InitialCheckpoint(*member);
             if (record.checkpoint > Route.size() || !member->movespline->Finalized())
                 continue;
-            if (!transit.throughGas && !fightStarted && member->IsInCombat())
+            bool const inTunnel = AtGasTunnel(*member);
+            if (!fightStarted && member->IsInCombat() && !inTunnel)
                 continue;
+            // Recheck the current floor after a pause or knockback. A bot
+            // already in the tunnel should only head towards its exit.
+            if (AtDropApproach(*member))
+                record.checkpoint = Route.size();
+            else if (inTunnel)
+                record.checkpoint = TunnelExit;
             if (record.checkpoint < Route.size())
             {
                 float const radius = record.checkpoint == 0 ? 3.0f : 0.5f;
@@ -447,7 +473,8 @@ namespace
             return nullptr;
         ObjectGuid const ownerGuid = DcRun::Of(&ai).naxx40GluthTransitOwner;
         Player* owner = ownerGuid.IsEmpty() ? nullptr : ObjectAccessor::GetPlayer(*bot, ownerGuid);
-        PlayerbotAI* ownerAI = owner && owner->GetGroup() == bot->GetGroup() ? GET_PLAYERBOT_AI(owner) : nullptr;
+        PlayerbotAI* ownerAI = owner && owner->IsInMap(bot) && owner->GetGroup() == bot->GetGroup()
+            ? GET_PLAYERBOT_AI(owner) : nullptr;
         if (!ownerAI)
             return nullptr;
         DcRunState const& run = DcRun::Of(ownerAI);
@@ -471,7 +498,7 @@ namespace
             for (auto const& ref : map->GetPlayers())
             {
                 Player* owner = ref.GetSource();
-                if (!owner || !owner->GetGroup() || !owner->IsAlive())
+                if (!owner || !owner->GetGroup())
                     continue;
                 PlayerbotAI* ai = GET_PLAYERBOT_AI(owner);
                 if (!ai)
@@ -482,6 +509,12 @@ namespace
                     continue;
                 EncounterState const gluth = instance->GetBossState(GluthEncounter);
                 if (gluth == DONE || (instance->IsEncounterInProgress() && gluth != IN_PROGRESS))
+                    continue;
+                // Finish a committed descent even if Gluth kills the leader
+                // before the last bot lands. Never arm a transit from a corpse.
+                Transit const& transit = run.naxx40GluthTransit;
+                if (!owner->IsAlive() && (gluth != IN_PROGRESS || !transit.throughGas ||
+                    transit.instanceId != owner->GetInstanceId() || transit.group != owner->GetGroup()->GetGUID()))
                     continue;
                 std::optional<DungeonBossInfo> next;
                 if (gluth != IN_PROGRESS)
@@ -506,13 +539,17 @@ bool BlocksGeneric(Player* bot, uint32 nextBoss)
 bool OwnsMovement(PlayerbotAI* ai)
 {
     Transit const* transit = ai ? ActiveTransit(*ai) : nullptr;
-    return transit && (!ai->GetBot()->IsInCombat() || transit->throughGas);
+    if (!transit)
+        return false;
+    Player* bot = ai->GetBot();
+    return !bot->IsInCombat() || (transit->throughGas &&
+        (AtGasTunnel(*bot) || Falling(*bot) || bot->GetInstanceScript()->GetBossState(GluthEncounter) == IN_PROGRESS));
 }
 
 bool InGasTransit(PlayerbotAI* ai)
 {
     Transit const* transit = ai ? ActiveTransit(*ai) : nullptr;
-    return transit && transit->throughGas;
+    return transit && transit->throughGas && AtGasTunnel(*ai->GetBot());
 }
 
 void RegisterMapUpdate()
