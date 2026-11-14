@@ -1304,9 +1304,12 @@ bool DungeonClearPullAction::Execute(Event /*event*/)
                     DcMovement::StopBot(bot, DcMovement::Stop::HardPin);
                     DcMovement::ClearMovementWait(bot);
                     pull.abortTarget.Clear();
+                    pull.decisionTarget.Clear();
+                    pull.pullTarget.Clear();
+                    pull.tagTarget.Clear();
                     DcSetPullPhase(context, DcPullPhase::Idle);
                     DC_PULL_INFO("[DC:{}] Patchwerk: ranged tag timed out at ({:.1f},{:.1f},{:.1f}), target {} at "
-                                 "{:.1f}yd (LOS {}) -> checking the next dry stand", bot->GetName(),
+                                 "{:.1f}yd (LOS {}) -> rechecking the dry route", bot->GetName(),
                                  bot->GetPositionX(), bot->GetPositionY(), bot->GetPositionZ(),
                                  trash->GetGUID().ToString(), bot->GetExactDist(trash), bot->IsWithinLOSInMap(trash));
                     return true;

@@ -1160,6 +1160,7 @@ bool NoteSweepTagTimeout(Player* tank, AiObjectContext* context, uint32 bossEntr
     if (!sweep.reachedCheckpoint || !IsNorthCentreStand(sweep.checkpoint))
         return false;
     sweep.timedOutNorthCentreStand = sweep.checkpoint;
+    sweep.followerAnchor = NorthCentreCamp;
     ResetRouteTargets(context);
     return true;
 }
@@ -1655,6 +1656,7 @@ SweepResult Drive(PlayerbotAI* ai, AiObjectContext* context, uint32 bossEntry)
     Checkpoint const& point = RoutePoint(sweep.checkpoint);
     SectionId const section = SectionFor(sweep.checkpoint);
     ReportSection(*tank, sweep, section);
+    bool const northCentreRetry = IsNorthCentreStand(sweep.checkpoint) && sweep.timedOutNorthCentreStand;
     float const arrival = SweepArrival(sweep);
     if (sweep.reachedCheckpoint && !NorthCentreStandTimedOut(sweep) &&
         tank->GetExactDist(point.x, point.y, point.z) > arrival)
@@ -1708,7 +1710,9 @@ SweepResult Drive(PlayerbotAI* ai, AiObjectContext* context, uint32 bossEntry)
         sweep.followerAnchor = NorthRoomCamp;
     if (!sweep.reachedCheckpoint && tank->GetExactDist(point.x, point.y, point.z) > arrival && !atFarBank)
     {
-        SweepResult const movement = MoveToWhiteCheckpoint(ai, sweep.checkpoint, point, boss, false, mayProbe, arrival);
+        // The surveyed fallback stands are a tank-only movement from the existing camp.
+        SweepResult const movement = MoveToWhiteCheckpoint(ai, sweep.checkpoint, point, boss,
+            northCentreRetry, mayProbe && !northCentreRetry, arrival);
         if (movement != SweepResult::Blocked)
             return movement;
         if (mayProbe)
@@ -1784,7 +1788,14 @@ SweepResult Drive(PlayerbotAI* ai, AiObjectContext* context, uint32 bossEntry)
     }
 
     if (sweep.checkpoint == Sections[section].last && !SectionHasTrash(*tank, section))
+    {
         CompleteSection(*tank, sweep, section);
+        if (section == NorthCentre && sweep.timedOutNorthCentreStand)
+        {
+            sweep.timedOutNorthCentreStand.reset();
+            sweep.followerAnchor.reset();
+        }
+    }
     if (point.crossing)
         sweep.followerAnchor.reset();
     ++sweep.checkpoint;
