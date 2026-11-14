@@ -116,7 +116,7 @@ static bool InterruptsSlimeEscape(PlayerbotAI& ai, Action* action, std::string c
 
 static bool InterruptsGluthTransit(PlayerbotAI* ai, Player* bot, Action* action, std::string const& name)
 {
-    if (bot->GetMapId() != 533)
+    if (bot->GetMapId() != 533 || name == "grobbulus 40 leave cloud")
         return false;
     if (name == "food" || name == "drink")
         return DcNaxx40GluthTransit::InGasTransit(ai);

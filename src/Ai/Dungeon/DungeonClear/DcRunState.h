@@ -126,6 +126,7 @@ struct DcRunState
             uint32 lastAttempt = 0;
             bool dropped = false;
             bool landed = false;
+            char const* lastPathFailure = nullptr;
         };
 
         std::vector<Member> members;

@@ -7,12 +7,14 @@
 #include "Ai/Dungeon/DungeonClear/Action/DcActionShared.h"
 #include "Ai/Dungeon/DungeonClear/Data/DungeonBossInfo.h"
 #include "Ai/Dungeon/DungeonClear/DcApproachState.h"
+#include "Ai/Raid/Naxx40/Grobbulus40.h"
 #include "Ai/Raid/Naxx40/Naxx40Encounter.h"
 #include "AllMapScript.h"
 #include "ChunkedPathfinder.h"
 #include "Creature.h"
 #include "DcModuleEnable.h"
 #include "DcMovement.h"
+#include "DcCombatFlag.h"
 #include "DcNaxx40SlimeCrossing.h"
 #include "DcPlayerbotCompat.h"
 #include "DcRaidMuster.h"
@@ -33,7 +35,6 @@
 #include <algorithm>
 #include <array>
 #include <cmath>
-#include <list>
 
 namespace DcNaxx40GluthTransit
 {
@@ -47,14 +48,16 @@ namespace
     constexpr uint32 UpdateInterval = 150;
     constexpr uint32 RetryInterval = 1200;
     constexpr uint32 NoProgressTimeout = 90000;
-    constexpr std::size_t TunnelMuster = 5;
-    constexpr std::size_t TunnelExit = 7;
-    std::array<G3D::Vector3, 8> const Route{{
+    constexpr std::size_t TunnelMuster = 6;
+    constexpr std::size_t TunnelExit = 8;
+    std::array<G3D::Vector3, 9> const Route{{
         {3247.7253f, -3306.819f, 292.59506f},
         {3221.333f, -3349.333f, 296.84147f},
         {3216.8f, -3374.4f, 310.75584f},
         {3215.733f, -3374.667f, 312.08761f},
         {3194.933f, -3312.267f, 320.31727f},
+        // The navmesh turns around the pipe here before continuing to the muster.
+        {3173.867f, -3295.2f, 320.26614f},
         {3168.2822f, -3277.4412f, 318.763f},
         {3168.2822f, -3273.4412f, 318.6679f},
         {3252.5935f, -3189.0203f, 317.9101f},
@@ -104,13 +107,6 @@ namespace
             player.GetPositionY() >= -3190.0f && player.GetPositionY() <= -3070.0f;
     }
 
-    bool AtGrobbulus(Player const& player)
-    {
-        return player.GetPositionZ() >= 290.0f && player.GetPositionZ() <= 295.0f &&
-            player.GetPositionX() >= 3189.0f && player.GetPositionX() <= 3337.0f &&
-            player.GetPositionY() >= -3340.0f && player.GetPositionY() <= -3258.0f;
-    }
-
     bool Falling(Player const& player)
     {
         return player.GetMotionMaster()->GetCurrentMovementGeneratorType() == EFFECT_MOTION_TYPE;
@@ -138,56 +134,50 @@ namespace
             bot.GetPhaseMask(), LINEOFSIGHT_ALL_CHECKS, VMAP::ModelIgnoreFlags::Nothing);
     }
 
-    bool ClearsClouds(Player const& bot, Movement::PointsArray const& path)
+    bool HasTrashFight(Player& bot)
     {
-        if (bot.GetPositionZ() > 300.0f)
-            return true;
-        static std::vector<uint32> const entries{16363, 351089};
-        std::list<Creature*> nearby;
-        bot.GetCreatureListWithEntryInGrid(nearby, entries, 145.0f);
-        for (Creature const* cloud : nearby)
+        if (!Naxx40GrobbulusClouds::OnRoomFloor(bot))
+            return bot.IsInCombat();
+        if (!bot.IsInCombat() || !DcCombatFlag::IsEngaged(&bot))
+            return false;
+        auto const isTrash = [&bot](Unit const* other)
         {
-            if (!cloud->IsAlive())
-                continue;
-            G3D::Vector3 const center{cloud->GetPositionX(), cloud->GetPositionY(), cloud->GetPositionZ()};
-            float const radius = cloud->GetCombatReach() + 3.0f;
-            for (std::size_t i = 1; i < path.size(); ++i)
-            {
-                G3D::Vector3 const start = path[i - 1] - center;
-                G3D::Vector3 const step = path[i] - path[i - 1];
-                if (step.squaredLength() < 0.001f)
-                    continue;
-                float const fraction = std::clamp(-start.dot(step) / step.squaredLength(), 0.0f, 1.0f);
-                float const closest = (start + step * fraction).length();
-                if (closest < radius && (start.length() >= radius || closest + 0.15f < start.length()))
-                    return false;
-                if (i + 1 == path.size() && (path.back() - center).length() < radius)
-                    return false;
-            }
-        }
-        return true;
+            return other && other->IsAlive() && other->IsInWorld() && other->IsInMap(&bot) &&
+                !Naxx40GrobbulusClouds::IsEntry(other->GetEntry()) &&
+                bot.GetExactDist(other) <= DC_ENGAGEMENT_RADIUS &&
+                !other->GetCombatManager().IsInEvadeMode() && bot.IsValidAttackTarget(other);
+        };
+        return isTrash(bot.GetVictim()) || std::ranges::any_of(bot.getAttackers(), isTrash);
     }
 
-    Movement::PointsArray WalkPath(Player& bot, G3D::Vector3 const& goal, float limit)
+    Movement::PointsArray WalkPath(Player& bot, G3D::Vector3 const& goal, float limit, char const*& failure)
     {
+        failure = "no complete navmesh path";
         PathGenerator nav(&bot);
         nav.SetExcludeFlags(NAV_WATER | NAV_MAGMA | NAV_SLIME | NAV_GROUND_STEEP);
-        if (!nav.CalculatePath(goal.x, goal.y, goal.z) || nav.GetPathType() != PATHFIND_NORMAL ||
-            nav.GetPath().size() < 2 || (nav.GetActualEndPosition() - goal).length() > 1.5f ||
-            nav.getPathLength() > limit || !DcNaxx40SlimeCrossing::IsDryCampGround(bot, goal))
+        if (!nav.CalculatePath(goal.x, goal.y, goal.z) || nav.GetPathType() != PATHFIND_NORMAL || nav.GetPath().size() < 2)
+            return {};
+        failure = "navmesh endpoint or length outside bounds";
+        if ((nav.GetActualEndPosition() - goal).length() > 1.5f || nav.getPathLength() > limit)
+            return {};
+        failure = "destination floor is not dry";
+        if (!DcNaxx40SlimeCrossing::IsDryCampGround(bot, goal))
             return {};
 
         Movement::PointsArray path = nav.GetPath();
         path.front() = Location(bot);
         path.back() = goal;
+        failure = "line of sight blocked";
         for (std::size_t i = 1; i < path.size(); ++i)
             if (!ClearLine(bot, path[i - 1], path[i], 0.8f))
                 return {};
-        if (!ClearsClouds(bot, path))
+        failure = "active Grobbulus cloud in path";
+        if (!Naxx40GrobbulusClouds::ClearsPath(bot, path))
             return {};
         // A two-point escort would ask the core for a new path and discard these checks.
         if (path.size() == 2)
             path.insert(path.begin() + 1, (path.front() + path.back()) * 0.5f);
+        failure = nullptr;
         return path;
     }
 
@@ -231,7 +221,7 @@ namespace
 
     std::size_t InitialCheckpoint(Player& bot)
     {
-        if (AtGrobbulus(bot))
+        if (Naxx40GrobbulusClouds::OnRoomFloor(bot))
             return 0;
         if (AtDropApproach(bot))
             return Route.size();
@@ -312,19 +302,37 @@ namespace
         Player& owner = *ai.GetBot();
         AiObjectContext* context = ai.GetAiObjectContext();
         Transit& transit = run.naxx40GluthTransit;
+        bool const fightStarted = gluth == IN_PROGRESS;
         if (transit.instanceId != owner.GetInstanceId() || transit.group != owner.GetGroup()->GetGUID())
+        {
+            // Arming stops existing splines. Let the raid finish leaving active
+            // clouds and let remaining injections resolve before we take over.
+            if (!fightStarted)
+            {
+                for (GroupReference* ref = owner.GetGroup()->GetFirstMember(); ref; ref = ref->next())
+                {
+                    Player* member = ref->GetSource();
+                    if (member && member->IsAlive() && member->IsInMap(&owner) && owner.InSamePhase(member) &&
+                        GET_PLAYERBOT_AI(member) && (Naxx40GrobbulusClouds::HasPendingInjection(*member) ||
+                        Naxx40GrobbulusClouds::NeedsEscape(*member)))
+                    {
+                        DcActionShared::SetPhase(context, "leaving residual Grobbulus clouds");
+                        return;
+                    }
+                }
+            }
             Arm(owner, context, transit, now);
+        }
         if (transit.complete || transit.stopped || now - transit.lastUpdate < UpdateInterval)
             return;
         transit.lastUpdate = now;
-        bool const fightStarted = gluth == IN_PROGRESS;
         bool const resumeInTunnel = !transit.throughGas &&
             std::ranges::any_of(transit.members, [&](Transit::Member const& record)
             {
                 Player const* member = GetMember(owner, record.guid);
                 return member && member->IsAlive() && AtGasTunnel(*member);
             });
-        if (!transit.throughGas && !fightStarted && !resumeInTunnel && owner.IsInCombat())
+        if (!transit.throughGas && !fightStarted && !resumeInTunnel && HasTrashFight(owner))
         {
             transit.lastProgress = now;
             return;
@@ -365,6 +373,12 @@ namespace
             Player* member = GetMember(owner, record.guid);
             if (!member || !member->IsAlive())
                 continue;
+            if (!fightStarted && (Naxx40GrobbulusClouds::HasPendingInjection(*member) ||
+                Naxx40GrobbulusClouds::NeedsEscape(*member)))
+            {
+                transit.lastProgress = now;
+                continue;
+            }
             if (record.landed || Landed(*member, record.dropped))
             {
                 ++landed;
@@ -391,7 +405,7 @@ namespace
             if (record.checkpoint > Route.size() || !member->movespline->Finalized())
                 continue;
             bool const inTunnel = AtGasTunnel(*member);
-            if (!fightStarted && member->IsInCombat() && !inTunnel)
+            if (!fightStarted && !inTunnel && HasTrashFight(*member))
                 continue;
             // Recheck the current floor after a pause or knockback. A bot
             // already in the tunnel should only head towards its exit.
@@ -407,6 +421,7 @@ namespace
                     ++record.checkpoint;
                     transit.lastProgress = now;
                     record.lastAttempt = 0;
+                    record.lastPathFailure = nullptr;
                 }
             }
             if ((record.checkpoint > 0 && !transit.prepared) ||
@@ -425,7 +440,8 @@ namespace
                 continue;
             }
             Movement::PointsArray path = WalkPath(*member, Route[record.checkpoint],
-                record.checkpoint == 0 ? 120.0f : record.checkpoint == TunnelExit ? 140.0f : 90.0f);
+                record.checkpoint == 0 ? 120.0f : record.checkpoint == TunnelExit ? 140.0f : 90.0f,
+                record.lastPathFailure);
             if (!path.empty() && DcMovement::SplinePath(memberAI, path, MovementPriority::MOVEMENT_FORCED,
                 FORCED_MOVEMENT_RUN))
             {
@@ -435,6 +451,8 @@ namespace
                         owner.GetName(), member->GetName(), DcPlayerbotCompat::IsSelfBot(member),
                         member->GetSpeed(MOVE_RUN), member->GetHealth(), member->GetMaxHealth());
             }
+            else if (!path.empty())
+                record.lastPathFailure = "motion rejected the checked spline";
         }
         if (landed == transit.members.size())
         {
@@ -452,10 +470,23 @@ namespace
             DcActionShared::SetPhase(context, transit.throughGas
                 ? "Gluth tunnel blocked; trying to finish the crossing"
                 : "Gluth route blocked; regroup and resume");
+            std::array<bool, Route.size() + 2> reported{};
             for (Transit::Member const& record : transit.members)
-                if (!record.landed)
-                    LOG_WARN("playerbots.dungeonclear", "[DC:{}] Gluth route blocked at checkpoint {} for {}",
+            {
+                if (record.landed || reported[record.checkpoint])
+                    continue;
+                reported[record.checkpoint] = true;
+                Player const* member = GetMember(owner, record.guid);
+                if (member)
+                    LOG_WARN("playerbots.dungeonclear", "[DC:{}] Gluth route blocked at checkpoint {} for {} "
+                        "at ({:.3f},{:.3f},{:.3f}), alive={}, combat={}, last path: {}",
+                        owner.GetName(), record.checkpoint, member->GetName(), member->GetPositionX(),
+                        member->GetPositionY(), member->GetPositionZ(), member->IsAlive(), member->IsInCombat(),
+                        record.lastPathFailure ? record.lastPathFailure : "none recorded");
+                else
+                    LOG_WARN("playerbots.dungeonclear", "[DC:{}] Gluth route blocked at checkpoint {} for {} (unavailable)",
                         owner.GetName(), record.checkpoint, record.guid.ToString());
+            }
         }
         else if (transit.prepared)
             DcActionShared::SetPhase(context, transit.throughGas
@@ -542,7 +573,7 @@ bool OwnsMovement(PlayerbotAI* ai)
     if (!transit)
         return false;
     Player* bot = ai->GetBot();
-    return !bot->IsInCombat() || (transit->throughGas &&
+    return !HasTrashFight(*bot) || (transit->throughGas &&
         (AtGasTunnel(*bot) || Falling(*bot) || bot->GetInstanceScript()->GetBossState(GluthEncounter) == IN_PROGRESS));
 }
 
