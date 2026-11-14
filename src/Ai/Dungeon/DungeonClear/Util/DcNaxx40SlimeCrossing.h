@@ -14,6 +14,9 @@ struct Position;
 namespace DcNaxx40SlimeCrossing
 {
     inline constexpr float RouteLookahead = 36.0f;
+    inline constexpr float PatchwerkFirstBankX = 3088.4287f;
+    inline constexpr float PatchwerkFirstBankY = -3219.822f;
+    inline constexpr float PatchwerkFirstBankZ = 294.21243f;
 
     // Planned points must start at or ahead of the bot and be in route order.
     // Takes over only at the near bank of a crossing already present in that route.

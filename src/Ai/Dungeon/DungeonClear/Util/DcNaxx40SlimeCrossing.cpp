@@ -39,7 +39,8 @@ namespace
     // Banks marked in-game or verified against terrain, in either route direction.
     std::array<Crossing, 3> const Crossings = {{
         // The mesh runs above the slime but cuts slightly below the raised lip.
-        {{3088.4287f, -3219.822f, 294.21243f}, {3066.5212f, -3224.1794f, 294.06342f}, 0, true, 0.25f},
+        {{PatchwerkFirstBankX, PatchwerkFirstBankY, PatchwerkFirstBankZ},
+            {3066.5212f, -3224.1794f, 294.06342f}, 0, true, 0.25f},
         {{3317.2993f, -3236.3027f, 294.06342f}, {3318.366f, -3263.8232f, 292.595f}, 181123},
         {{3052.70f, -3227.90f, 294.063f}, {3038.50f, -3231.40f, 294.063f}, 0, true},
     }};

@@ -270,8 +270,9 @@ namespace
     // and the north room from short detours before waiting at the white camp.
     constexpr std::array<Checkpoint, 25> WhiteRoute = {{
         {3122.35f, -3224.93f, 29.0f, false, Floor, 0, 361323},
-        {3094.5f, -3219.9f},
-        {3088.43f, -3219.82f},
+        {3094.5f, -3219.9f, 0.0f, false, 294.114f},
+        {DcNaxx40SlimeCrossing::PatchwerkFirstBankX, DcNaxx40SlimeCrossing::PatchwerkFirstBankY,
+            0.0f, false, DcNaxx40SlimeCrossing::PatchwerkFirstBankZ},
         {3066.52f, -3224.18f, 0.0f, true},
         {3052.70f, -3227.90f},
         {3038.50f, -3231.40f, 29.0f, true, 294.063f, 0, 0, &SouthWestCamp},
@@ -295,6 +296,7 @@ namespace
         {3095.37f, -3108.93f},
         {PullCampX, PullCampY, 0.0f, false, PullCampZ},
     }};
+    constexpr std::size_t FirstBankApproach = 1;
     constexpr std::size_t EastBank = 2;
     constexpr std::size_t WestBank = 3;
     constexpr std::size_t OuterBank = 5;
@@ -967,6 +969,36 @@ namespace
         return true;
     }
 
+    bool TryRejoinAtSecondLanding(Player& tank, AiObjectContext* context, Creature* boss,
+                                  DcRunState::PatchwerkSweep& sweep)
+    {
+        Checkpoint const& bank = RoutePoint(OuterBank);
+        Position const landing(bank.x, bank.y, bank.z);
+        // After combat a tank can be on the dry lip just outside WestRecoveryArea.
+        // A short, dry connection must lead west to the landing without recrossing.
+        if (tank.GetPositionX() >= 3042.0f || tank.GetExactDist(&landing) > 8.0f)
+            return false;
+        if (!OnFarBank(tank, OuterBank) || !RaidAtBank(tank, WestBank) || SectionHasTrash(tank, FirstCrossing))
+            return false;
+        if (tank.GetExactDist(&landing) > Arrive)
+        {
+            auto const path = BuildSweepCampLeg(&tank, landing);
+            if (path.empty() || !ClearsPatrol(tank, boss, path, true))
+                return false;
+        }
+
+        std::size_t const old = sweep.checkpoint;
+        CompleteSection(tank, sweep, FirstCrossing);
+        CompleteSection(tank, sweep, BetweenCrossings);
+        sweep.checkpoint = OuterBank;
+        sweep.reachedCheckpoint = false;
+        sweep.followerAnchor = landing;
+        ResetRouteTargets(context);
+        LOG_INFO("playerbots.dungeonclear", "[DC:{}] Patchwerk: route rejoin checkpoint {} to {} at the second landing",
+            tank.GetName(), old, OuterBank);
+        return true;
+    }
+
     SweepResult HoldRoute(PlayerbotAI* ai, std::string const& reason)
     {
         std::string const message = "Patchwerk: " + reason;
@@ -1446,6 +1478,12 @@ bool DriveRouteFollower(PlayerbotAI* ai, Player* tank)
     auto path = BuildSweepCampLeg(member, anchor);
     if (path.empty() && shallowExit)
         path = DcNaxx40SlimeCrossing::BuildPatchwerkRecoveryPath(member, anchor);
+    Checkpoint const& bankApproach = RoutePoint(FirstBankApproach);
+    if (path.empty() && crossing && sweep.checkpoint == WestBank && !shallowExit &&
+        destination.x == RoutePoint(EastBank).x && member->GetPositionX() > bankApproach.x)
+    {
+        path = BuildSweepCampLeg(member, {bankApproach.x, bankApproach.y, bankApproach.z});
+    }
     Creature* const boss = DcTargeting::GetLiveBoss(tank, context, Naxx40PatchwerkEntry);
     if (!path.empty() && ClearsPatrol(*member, boss, path, true))
         DcMovement::SplinePath(ai, path, MovementPriority::MOVEMENT_NORMAL);
@@ -1540,6 +1578,15 @@ SweepResult Drive(PlayerbotAI* ai, AiObjectContext* context, uint32 bossEntry)
     uint32 const now = getMSTime();
     bool const mayProbe = !sweep.nextRecoveryProbe ||
         getMSTimeDiff(sweep.nextRecoveryProbe, now) >= 1800;
+    if (!sweep.recoveryGoal && mayProbe && sweep.checkpoint >= WestBank && sweep.checkpoint < OuterBank &&
+        !DcMovement::OwnsRunningEscort(tank))
+    {
+        if (west && RaidAtBank(*tank, OuterBank) && !SectionHasTrash(*tank, FirstCrossing) &&
+            TryWestRejoin(*tank, context, boss, sweep))
+            return SweepResult::Moving;
+        if (TryRejoinAtSecondLanding(*tank, context, boss, sweep))
+            return SweepResult::Moving;
+    }
     if (!sweep.recoveryGoal && west && mayProbe && !DcMovement::OwnsRunningEscort(tank) &&
         tank->GetExactDist(expected.x, expected.y, expected.z) > 35.0f)
     {
