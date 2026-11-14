@@ -155,6 +155,33 @@ struct DcRunState
     uint32 naxx40ThaddiusSpline = 0;
     uint32 naxx40ThaddiusLastMove = 0;
 
+    struct ThaddiusExit
+    {
+        struct Member
+        {
+            enum class Stage { Approach, Jump, Crossing, Ramp, Arrived, Failed };
+            ObjectGuid guid;
+            bool healer = false;
+            Stage stage = Stage::Approach;
+            uint32 spline = 0;
+            uint32 departure = 0;
+            uint32 lastAttempt = 0;
+            uint32 wetSince = 0;
+            uint8 rampRetries = 0;
+            bool renewed = false;
+        };
+
+        std::vector<Member> members;
+        ObjectGuid group;
+        uint32 instanceId = 0;
+        uint32 lastUpdate = 0;
+        uint32 lastReport = 0;
+        uint32 lastProgress = 0;
+        uint32 wave = 0;
+        bool complete = false;
+    } naxx40ThaddiusExit;
+    ObjectGuid naxx40ThaddiusExitOwner;
+
     struct PatchwerkCampRoute
     {
         uint32 instanceId = 0;

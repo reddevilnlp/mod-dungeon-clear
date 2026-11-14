@@ -2325,6 +2325,9 @@ bool DungeonClearAdvanceAction::Execute(Event event)
     if (Step s = TryLootYield(st); s != Step::Continue)
         return s == Step::ReturnTrue;
 
+    if (DcNaxx40Thaddius::BeginExit(botAI))
+        return true;
+
     if (DcNaxx40LivingPoison::BeginApproach(botAI, next->entry))
         return true;
 

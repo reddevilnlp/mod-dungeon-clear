@@ -364,6 +364,10 @@ float DungeonClearMultiplier::GetValue(Action* action)
 
     std::string const& name = action->getName();
 
+    if ((dynamic_cast<CastSpellAction*>(action) || name == "food" || name == "drink") &&
+        DcNaxx40Thaddius::InExitTransition(botAI))
+        return 0.0f;
+
     if (InterruptsGluthTransit(botAI, bot, action, name) ||
         LeavesEmbalmingCamp(botAI, bot, action, name) || LeavesPatchwerkPosition(botAI, bot, action, name) ||
         (bot->GetMapId() == 533 && InterruptsSlimeEscape(*botAI, action, name)))

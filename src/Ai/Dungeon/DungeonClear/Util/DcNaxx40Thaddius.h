@@ -12,6 +12,8 @@ class PlayerbotAI;
 
 namespace DcNaxx40Thaddius
 {
+    bool BeginExit(PlayerbotAI* ai);
+    bool InExitTransition(PlayerbotAI* ai);
     bool BlocksGeneric(Player* bot, uint32 nextBoss);
     bool OwnsMovement(PlayerbotAI* ai);
     void RegisterMapUpdate();
