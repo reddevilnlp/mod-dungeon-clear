@@ -6,6 +6,7 @@
 #include "DcPartyState.h"
 
 #include "DcTickMemo.h"
+#include "DcNaxx40Patchwerk.h"
 #include "DungeonClearMath.h"
 #include "DungeonClearTuning.h"
 #include "DungeonClearUtil.h"   // DC_PULL_* log macros
@@ -275,6 +276,14 @@ DcPartyState::SpreadGate DcPartyState::GetSpreadGate(Player* bot, AiObjectContex
             }
         }
     }
+
+    if (bot->GetMapId() == 533 && pull.phase == DcPullPhase::Idle)
+        if (auto const next = context->GetValue<std::optional<DungeonBossInfo>>(DcKey::NextDungeonBoss)->Get();
+            next && DcNaxx40Patchwerk::HasRouteFollowerAnchor(bot, context, next->entry))
+        {
+            gate.anchor = &*DcRun::Of(context).patchwerkSweep.followerAnchor;
+            return gate;
+        }
 
     // Pull mode between maneuvers (Idle): hold-at-camp still pins the party at
     // the camp, so "caught up" must be measured against the camp, not the tank —

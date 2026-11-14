@@ -12,6 +12,7 @@
 #include "Ai/Dungeon/DungeonClear/Value/DungeonBossesValue.h"
 #include "Ai/Dungeon/DungeonClear/Data/ScriptedPullRegistry.h"
 #include "Ai/Dungeon/DungeonClear/Util/DcTickMemo.h"
+#include "Ai/Dungeon/DungeonClear/Util/DcNaxx40Embalming.h"
 #include "Ai/Dungeon/DungeonClear/Util/DcNaxx40Patchwerk.h"
 #include "Creature.h"
 #include "Ai/Dungeon/DungeonClear/DcValueKeys.h"
@@ -58,9 +59,13 @@ ObjectGuid DungeonClearPullTargetValue::Calculate()
     {
         if (pull.phase == DcPullPhase::Forming || pull.phase == DcPullPhase::Advancing)
             return pull.pullTarget;
-        if (Creature* slime = DcNaxx40Patchwerk::FindEmbalmingPull(botAI, pull.abortTarget))
-            if (!DcNaxx40Patchwerk::DeferEmbalmingUntilLowerEast(bot, context, next->entry, slime))
-                return slime->GetGUID();
+        Creature* const slime = DcNaxx40Patchwerk::FindEmbalmingPull(botAI, pull.abortTarget);
+        if (slime && (!pull.fizzleCount || slime->GetGUID() != pull.fizzleTarget))
+            return slime->GetGUID();
+        if (auto const survivor = DcNaxx40Embalming::FindSurvivorPull(botAI, pull.abortTarget))
+            return survivor->target;
+        if (slime)
+            return slime->GetGUID();
         return ObjectGuid::Empty;
     }
 

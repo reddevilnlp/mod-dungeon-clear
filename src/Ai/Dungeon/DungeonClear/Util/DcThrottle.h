@@ -41,6 +41,7 @@ enum class DcThrottle : uint8
 {
     // --- movement re-issue floors (destination + time) ---------------------
     TransitIssue,        // DcTransit::TravelTo — the BWL Suppression Rooms crossing
+    Naxx40PatchwerkFollower, // move to the validated bank or room camp
     VhTravelIssue,       // VhTravelTo — the Violet Hold arena
     BmTravelIssue,       // BmTravelTo — the Black Morass arena
     RazorgoreOrbIssue,   // the BWL egg runner's walk between eggs

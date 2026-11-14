@@ -34,6 +34,10 @@ namespace DcNaxx40SlimeCrossing
     bool IsDryCampGround(Player const& bot, G3D::Vector3 const& point);
     Movement::PointsArray BuildSurveyedDryLeg(Player* bot, G3D::Vector3 const& end);
     Movement::PointsArray BuildDryCampPath(Player* bot, Position const& destination);
+
+    // Local Patchwerk rejoin: tests short floor-following detours to a dry point.
+    // Only a character already on a shallow slime edge may use the short exit prefix.
+    Movement::PointsArray BuildPatchwerkRecoveryPath(Player* bot, Position const& destination);
 }
 
 #endif

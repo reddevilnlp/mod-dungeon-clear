@@ -139,7 +139,12 @@ struct DcRunState
         uint32 instanceId = 0;
         std::size_t checkpoint = 0;
         bool reachedCheckpoint = false;
-        bool returningToWestStart = false;
+        // A rejoin can walk back to a live pack via the dry spine.
+        std::optional<std::size_t> recoveryGoal;
+        uint32 nextRecoveryProbe = 0;
+        uint32 completedSections = 0;
+        std::size_t reportedSection = static_cast<std::size_t>(-1);
+        std::optional<Position> followerAnchor;
         bool reportedSurvivors = false;
         bool reportedEastClear = false;
         std::size_t lastCrossingReported = 0;

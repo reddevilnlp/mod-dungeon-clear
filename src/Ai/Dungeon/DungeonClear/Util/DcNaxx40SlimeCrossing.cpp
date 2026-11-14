@@ -19,6 +19,9 @@
 #include <algorithm>
 #include <array>
 #include <cmath>
+#include <initializer_list>
+#include <optional>
+#include <utility>
 
 namespace DcNaxx40SlimeCrossing
 {
@@ -49,6 +52,12 @@ namespace
     constexpr float MaximumWetSeconds = 2.5f;
     constexpr float MaximumCrossingSeconds = 7.5f;
     constexpr uint32 PatchwerkGate = 181123;
+    constexpr float RecoveryDistance = 32.0f;
+    constexpr float RecoveryWetDistance = 1.0f;
+    constexpr float RecoveryWetDepth = 0.35f;
+    constexpr float RecoveryFloorStep = 0.5f;
+    constexpr float RecoverySampleStep = 0.25f;
+    constexpr float GroundClearance = 0.05f;
 
     float DistanceToSegmentSquared(G3D::Vector3 const& point, G3D::Vector3 const& from, G3D::Vector3 const& to)
     {
@@ -216,6 +225,70 @@ namespace
         points.front() = current;
         return LaunchCrossing(ai, points, crossing, crossing.floorProbeLift > 0.0f);
     }
+
+    struct RecoveryGround
+    {
+        float floor;
+        bool wet;
+    };
+
+    std::optional<RecoveryGround> ProbeRecoveryGround(Player const& bot, G3D::Vector3 const& point)
+    {
+        // Probe just above the lip. The path follows the returned floor, not the
+        // height of a straight line under a rising ledge or through another storey.
+        PositionFullTerrainStatus terrain;
+        bot.GetMap()->GetFullTerrainStatusForPosition(bot.GetPhaseMask(), point.x, point.y,
+            point.z + RecoveryFloorStep, bot.GetCollisionHeight(), terrain);
+        if (std::abs(point.z - terrain.floorZ) > RecoveryFloorStep)
+            return std::nullopt;
+
+        LiquidData const& liquid = terrain.liquidInfo;
+        if (liquid.Status == LIQUID_MAP_NO_WATER || liquid.Level <= terrain.floorZ)
+            return RecoveryGround{terrain.floorZ, false};
+        if (liquid.Entry != Naxx40SlimeLiquidId || liquid.Level - terrain.floorZ > RecoveryWetDepth)
+            return std::nullopt;
+        return RecoveryGround{terrain.floorZ, true};
+    }
+
+    Movement::PointsArray ProbeRecoveryPath(Player const& bot, G3D::Vector3 const& start,
+                                            G3D::Vector3 const& bend, G3D::Vector3 const& end, bool startsWet)
+    {
+        Movement::PointsArray points{start};
+        bool escaped = !startsWet;
+        float distance = 0.0f;
+        for (G3D::Vector3 const& target : {bend, end})
+        {
+            G3D::Vector3 const from = points.back();
+            G3D::Vector3 const horizontal(target.x - from.x, target.y - from.y, 0.0f);
+            float const length = horizontal.length();
+            if (length <= 0.01f)
+                continue;
+            int const samples = static_cast<int>(std::ceil(length / RecoverySampleStep));
+            G3D::Vector3 const step = horizontal / static_cast<float>(samples);
+            for (int sample = 1; sample <= samples; ++sample)
+            {
+                G3D::Vector3 const previous = points.back();
+                G3D::Vector3 point(from.x + step.x * sample, from.y + step.y * sample, previous.z);
+                auto const ground = ProbeRecoveryGround(bot, point);
+                if (!ground)
+                    return {};
+                point.z = ground->floor + GroundClearance;
+                distance += (point - previous).length();
+                if (distance > RecoveryDistance || (!escaped && distance > RecoveryWetDistance) ||
+                    (escaped && ground->wet))
+                    return {};
+                escaped = escaped || !ground->wet;
+                if (!bot.GetMap()->isInLineOfSight(previous.x, previous.y, previous.z + 0.75f, point.x, point.y,
+                                                  point.z + 0.75f, bot.GetPhaseMask(), LINEOFSIGHT_ALL_CHECKS,
+                                                  VMAP::ModelIgnoreFlags::Nothing))
+                    return {};
+                points.push_back(point);
+            }
+        }
+        if (points.size() < 3 || !escaped || std::abs(points.back().z - end.z) > RecoveryFloorStep)
+            return {};
+        return points;
+    }
 }
 
 bool TryGrobbulusCrossing(PlayerbotAI* ai)
@@ -297,6 +370,48 @@ Movement::PointsArray BuildDryCampPath(Player* bot, Position const& destination)
     if (points.size() == 2)
         points.insert(points.begin() + 1, (points.front() + points.back()) * 0.5f);
     return points;
+}
+
+Movement::PointsArray BuildPatchwerkRecoveryPath(Player* bot, Position const& destination)
+{
+    if (!bot || !IsNaxx40Map(bot->FindMap()) || !bot->IsAlive() || bot->IsInCombat() ||
+        bot->IsFlying() || bot->IsFalling() || bot->GetVehicle() || bot->GetTransport())
+        return {};
+
+    G3D::Vector3 const start(bot->GetPositionX(), bot->GetPositionY(), bot->GetPositionZ());
+    G3D::Vector3 const end(destination.GetPositionX(), destination.GetPositionY(), destination.GetPositionZ());
+    G3D::Vector3 const horizontal(end.x - start.x, end.y - start.y, 0.0f);
+    float const distance = horizontal.length();
+    if (distance < 0.5f || distance > RecoveryDistance || std::abs(end.z - start.z) > 2.0f)
+        return {};
+    auto const startGround = ProbeRecoveryGround(*bot, start);
+    auto const endGround = ProbeRecoveryGround(*bot, end);
+    if (!startGround || !endGround || endGround->wet)
+        return {};
+
+    // The recorded recovery between the two crossings works with an X-first
+    // bend. The other bends cover short wall and pool edges without a grid scan.
+    G3D::Vector3 const middle = (start + end) * 0.5f;
+    G3D::Vector3 const side = G3D::Vector3(-horizontal.y, horizontal.x, 0.0f) * (4.0f / distance);
+    std::array<G3D::Vector3, 5> const candidates = {{
+        middle, {end.x, start.y, middle.z}, {start.x, end.y, middle.z}, middle + side, middle - side,
+    }};
+    Movement::PointsArray best;
+    float bestDistance = RecoveryDistance;
+    for (G3D::Vector3 const& bend : candidates)
+    {
+        float const length = std::hypot(bend.x - start.x, bend.y - start.y) +
+                             std::hypot(end.x - bend.x, end.y - bend.y);
+        if (length > RecoveryDistance || (!best.empty() && length >= bestDistance))
+            continue;
+        auto path = ProbeRecoveryPath(*bot, start, bend, end, startGround->wet);
+        if (!path.empty())
+        {
+            best = std::move(path);
+            bestDistance = length;
+        }
+    }
+    return best;
 }
 
 bool IsNearBank(Player const* bot)

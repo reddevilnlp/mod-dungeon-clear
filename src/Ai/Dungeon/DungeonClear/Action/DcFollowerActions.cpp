@@ -371,6 +371,13 @@ bool DungeonClearFollowTankAction::Execute(Event /*event*/)
         lootYieldStart = 0;  // not looting -> reset the commit timer
     }
 
+    if (DcNaxx40Patchwerk::DriveRouteFollower(botAI, tank))
+    {
+        followedTank = tank->GetGUID();
+        DcFollowerLifecycle::MarkFollowing(bot->GetGUID());
+        return true;
+    }
+
     // A transit is driving the column to a published cursor: every branch below
     // positions against the TANK instead, and while the tank is snared behind its
     // own cursor those two answers fight each other tick by tick. See

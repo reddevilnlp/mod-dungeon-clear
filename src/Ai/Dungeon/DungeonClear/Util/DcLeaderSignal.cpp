@@ -58,6 +58,7 @@
 #include "Ai/Dungeon/DungeonClear/Data/Events/DungeonEventTables.h"
 #include "Ai/Dungeon/DungeonClear/Util/ChunkedPathfinder.h"
 #include "Ai/Dungeon/DungeonClear/Util/DcEngageGeometry.h"
+#include "Ai/Dungeon/DungeonClear/Util/DcNaxx40Patchwerk.h"
 #include "Ai/Dungeon/DungeonClear/Util/DcTargeting.h"
 #include "Ai/Dungeon/DungeonClear/Util/DungeonPathFollower.h"
 #include "Ai/Dungeon/DungeonClear/Util/NavmeshSnap.h"
@@ -739,7 +740,7 @@ bool DcLeaderSignal::GetLeaderPullInfo(Player* bot, uint32& phaseOut, Position& 
         (!ctx->GetValue<bool>(DcKey::PullMode)->Get() && !pull.bossPullback))
         return false;
 
-    if (pull.phase == DcPullPhase::Idle)
+    if (leader->GetMapId() == 533 && pull.phase == DcPullPhase::Idle)
         return false;
     if (!IsPullPhaseHolding(static_cast<uint32>(pull.phase)) &&
         DcRun::Of(ctx).paused)
@@ -778,6 +779,11 @@ bool DcLeaderSignal::GetLeaderCampHold(Player* bot, Position& campOut, bool& pas
     if (!IsPullPhaseHolding(static_cast<uint32>(pull.phase)) &&
         DcRun::Of(ctx).paused)
         return false;
+    if (pull.phase == DcPullPhase::Idle)
+        if (auto const next = ctx->GetValue<std::optional<DungeonBossInfo>>(DcKey::NextDungeonBoss)->Get();
+            next && DcNaxx40Patchwerk::HasRouteFollowerAnchor(leader, ctx, next->entry))
+            return false;
+
     Position const camp = pull.camp;
     // No camp marked yet (pull mode just toggled on, or a reset cleared it): there
     // is nothing to hold at, so let the caller fall back (briefly) to follow.

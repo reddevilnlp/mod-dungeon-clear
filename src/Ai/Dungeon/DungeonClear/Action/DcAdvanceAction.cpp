@@ -2240,6 +2240,7 @@ bool DungeonClearAdvanceAction::Execute(Event event)
     bool const pullback =
         BossPullbackRegistry::Find(bot->GetMapId(), next->entry) != nullptr;
     // The Patchwerk pre-clear owns the only approach to his patrol.
+    DcNaxx40Patchwerk::ObserveEntry(bot, context, next->entry);
     bool const patchwerk = DcNaxx40Patchwerk::SetApproachAnchor(bot, context, *next);
     Creature* const liveBoss =
         pullback || patchwerk ? nullptr : DcTargeting::GetLiveBoss(bot, context, next->entry);

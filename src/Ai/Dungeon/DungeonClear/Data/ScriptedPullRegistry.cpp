@@ -914,6 +914,7 @@ ScriptedPullStage const* ScriptedPullRegistry::DueStage(Player* bot, AiObjectCon
         if (s->bossEntry == Naxx40PatchwerkEntry &&
             (!DcNaxx40Patchwerk::UsesPatrolCamp(bot, ctx, next->entry) ||
              DcNaxx40Patchwerk::SweepInProgress(bot, ctx, next->entry) ||
+             !DcNaxx40Patchwerk::EntryPullDue(*bot, s->order) ||
              std::abs(bot->GetPositionZ() - s->campZ) > s->packZBand))
             continue;
         if (!InArmRange(*s, bot->GetPositionX(), bot->GetPositionY(), bot->GetPositionZ()))

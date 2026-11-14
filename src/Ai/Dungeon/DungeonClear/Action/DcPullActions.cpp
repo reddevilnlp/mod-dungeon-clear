@@ -202,7 +202,7 @@ namespace
         // perfectly healthy authored leg wedged, so they share the pull-back's
         // distance-sized budget. Still bounded, for the same reason: a genuinely
         // wedged leg must fall out to "fight in place", never freeze the run.
-        if (!pull.bossPullback && pull.scriptedStage < 0)
+        if (!pull.bossPullback && pull.scriptedStage < 0 && !pull.embalmingSurvivorStand)
             return DC_PULL_LEG_TIMEOUT_MS;
         float const travel = std::max(0.0f, legDist) * DC_PULLBACK_PATH_DETOUR;
         uint32 const budget =
@@ -831,6 +831,24 @@ bool DungeonClearPullAction::Execute(Event /*event*/)
             bool const naxx40RangedStand = embalmingRanged || sweepCamp.has_value();
             if (embalmingRanged && !DcNaxx40Embalming::IsSlime(trash))
                 return false;
+            std::optional<DcNaxx40Embalming::SurvivorPull> survivorPull;
+            std::optional<Position> slimeCamp;
+            if (embalmingRanged)
+            {
+                slimeCamp = DcNaxx40Embalming::PullCamp(bot, trash);
+                Creature const* const fromCurrent = DcNaxx40Patchwerk::FindEmbalmingPull(botAI, pull.abortTarget);
+                bool const retry = pull.fizzleCount && trash->GetGUID() == pull.fizzleTarget;
+                bool const direct = slimeCamp && fromCurrent && fromCurrent->GetGUID() == trash->GetGUID();
+                if (!direct || retry)
+                    survivorPull = DcNaxx40Embalming::FindSurvivorPull(botAI, pull.abortTarget, trash->GetGUID());
+                if (survivorPull)
+                    slimeCamp = survivorPull->camp;
+                else if (!direct)
+                {
+                    StallDungeonClear(botAI, "Patchwerk: no dry camp and firing position for the Embalming Slime.");
+                    return true;
+                }
+            }
             if (sweepCamp)
             {
                 auto const& targets = context->GetValue<std::vector<ObjectGuid>>(DcKey::RoomTrashRemaining)->Get();
@@ -1098,17 +1116,16 @@ bool DungeonClearPullAction::Execute(Event /*event*/)
                 drag = bot->GetExactDist(&*camped);
                 clearance = trash->GetExactDist(&*camped);
             }
-            else if (std::optional<Position> const slimeCamp = DcNaxx40Embalming::PullCamp(bot, trash))
+            else if (auto const selectedSlimeCamp = embalmingRanged ? slimeCamp :
+                     DcNaxx40Embalming::PullCamp(bot, trash))
             {
                 // Use the fixed camp at Forming, after the raid has followed the approach.
                 if (next)
                     DcNaxx40Patchwerk::NoteClearedLowerEast(bot, context, next->entry);
-                camped = slimeCamp;
-                drag = bot->GetExactDist(&*camped);
+                camped = selectedSlimeCamp;
+                drag = survivorPull ? survivorPull->stand.GetExactDist(&*camped) : bot->GetExactDist(&*camped);
                 clearance = trash->GetExactDist(&*camped);
             }
-            else if (embalmingRanged)
-                return false;
             else
                 camped = DcPullPlanner::ComputeSafeCamp(botAI, trash, setback, safeRadius,
                                                         maxDrag, clearance, drag);
@@ -1147,6 +1164,15 @@ bool DungeonClearPullAction::Execute(Event /*event*/)
             DcFaceIfNeeded(bot, trash);
             DcSetPullPhase(context, DcPullPhase::Forming);
             pull.naxx40RangedStand = naxx40RangedStand;
+            if (survivorPull)
+            {
+                pull.embalmingSurvivorStand = survivorPull->stand;
+                DC_PULL_INFO("[DC:{}] Patchwerk: Embalming survivor {} from stand ({:.1f},{:.1f},{:.1f}) "
+                             "with camp ({:.1f},{:.1f},{:.1f})",
+                    bot->GetName(), trash->GetGUID().ToString(), survivorPull->stand.GetPositionX(),
+                    survivorPull->stand.GetPositionY(), survivorPull->stand.GetPositionZ(),
+                    camp.GetPositionX(), camp.GetPositionY(), camp.GetPositionZ());
+            }
             if (sweepCamp)
                 DC_PULL_INFO("[DC:{}] Patchwerk: checkpoint {} ranged pull from the dry stand",
                     bot->GetName(), DcRun::Of(context).patchwerkSweep.checkpoint);
@@ -1188,9 +1214,18 @@ bool DungeonClearPullAction::Execute(Event /*event*/)
             // tight slot pin (see DcFollowerActions), so they settle far inside this
             // radius and it needs no margin.
             uint32 const setTimeoutMs =
-                pull.scriptedStage >= 0
-                    ? ScriptedPullTravelBudgetMs(bot->GetExactDist(&camp))
+                (pull.scriptedStage >= 0 || pull.embalmingSurvivorStand)
+                    ? ScriptedPullTravelBudgetMs(pull.embalmingSurvivorStand
+                            ? pull.embalmingSurvivorStand->GetExactDist(&camp) : bot->GetExactDist(&camp))
                     : DC_PULL_PARTY_SET_TIMEOUT_MS;
+
+            if (pull.embalmingSurvivorStand && !DcNaxx40Embalming::IsSurvivorCampSafe(bot, camp))
+            {
+                pull.embalmingRetriedForward = pull.pullTarget;
+                DcSetPullPhase(context, DcPullPhase::Idle);
+                context->GetValue<ObjectGuid>(DcKey::PullTarget)->Reset();
+                return true;
+            }
 
             bool const partySet = DcNaxx40Patchwerk::IsPatrolPull(pull)
                 ? DcNaxx40Patchwerk::PatrolFormationReady(bot)
@@ -1202,6 +1237,18 @@ bool DungeonClearPullAction::Execute(Event /*event*/)
                               "({}/{} ms)", bot->GetName(), now - since, setTimeoutMs);
                 return true;
             }
+            if (!partySet && pull.embalmingSurvivorStand)
+            {
+                if (DcNaxx40Embalming::IsForwardCamp(camp))
+                {
+                    pull.embalmingRetriedForward = pull.pullTarget;
+                    DcSetPullPhase(context, DcPullPhase::Idle);
+                    context->GetValue<ObjectGuid>(DcKey::PullTarget)->Reset();
+                    return true;
+                }
+                StallDungeonClear(botAI, "Patchwerk: waiting for the raid to reach the Embalming Slimes camp.");
+                return true;
+            }
             // SCRIPTED: drop anything still driving the tank before the tag leg
             // starts. The route rungs stand down once the phase leaves Idle, but
             // that cannot un-launch a spline issued on the very tick the pull
@@ -1209,12 +1256,14 @@ bool DungeonClearPullAction::Execute(Event /*event*/)
             // (tr-20260802-222832-1). Killing it here costs nothing (the tank is
             // parked at the commit spot by the Forming dwell) and means the walk to
             // the stand spot starts from a clean slate.
-            if (pull.scriptedStage >= 0)
+            if (pull.scriptedStage >= 0 || pull.embalmingSurvivorStand)
             {
                 DcMovement::StopBot(bot, DcMovement::Stop::Hold);
                 DcMovement::ClearMovementWait(bot);
             }
 
+            if (pull.embalmingSurvivorStand)
+                ClearStall(context);
             DcSetPullPhase(context, DcPullPhase::Advancing);
             DC_PULL_DEBUG("[DC:{}] pull forming complete ({}) -> advancing (tag)",
                           bot->GetName(),
@@ -1252,12 +1301,39 @@ bool DungeonClearPullAction::Execute(Event /*event*/)
                 // which means unlatching a scripted stage too, or "so the run never
                 // hangs" is exactly what it stops doing (see AbandonScriptedStage).
                 pull.abortTarget = trash->GetGUID();
+                if (pull.embalmingSurvivorStand)
+                {
+                    DcMovement::StopBot(bot, DcMovement::Stop::HardPin);
+                    DcMovement::ClearMovementWait(bot);
+                    context->GetValue<ObjectGuid>(DcKey::PullTarget)->Reset();
+                    DcSetPullPhase(context, DcPullPhase::Idle);
+                    StallDungeonClear(botAI, "Patchwerk: Embalming survivor shot timed out from the dry stand.");
+                    return true;
+                }
                 AbandonScriptedStage(pull);
                 DcSetPullPhase(context, DcPullPhase::Idle);
                 DC_PULL_INFO("[DC:{}] advanced-pull: tag timed out (target {} at "
                              "{:.1f}yd) -> normal engage", bot->GetName(),
                              trash->GetGUID().ToString(), bot->GetExactDist(trash));
                 return false;
+            }
+
+            if (pull.embalmingSurvivorStand && pull.tagTarget != trash->GetGUID())
+            {
+                if (bot->GetExactDist(&*pull.embalmingSurvivorStand) >
+                    DcNaxx40Embalming::SurvivorStandArrival)
+                {
+                    if (!DcNaxx40Embalming::DriveSurvivorStand(botAI, *pull.embalmingSurvivorStand))
+                        StallDungeonClear(botAI, "Patchwerk: waiting for a dry path to the Embalming survivor stand.");
+                    return true;
+                }
+                if (!pull.scriptedAtStandMs)
+                {
+                    pull.scriptedAtStandMs = now;
+                    DcMovement::StopBot(bot, DcMovement::Stop::HardPin);
+                    DcMovement::ClearMovementWait(bot);
+                    ClearStall(context);
+                }
             }
 
             // CHASE LEASH. The tag leg re-aims at the target's LIVE position every
@@ -1355,7 +1431,7 @@ bool DungeonClearPullAction::Execute(Event /*event*/)
             // the pack AND the spot, so "the pack has receded from where the plan was
             // measured" is not a thing that can happen — the plan was measured
             // against a hand-authored spawn cluster, not against a live snapshot.
-            if (!pull.bossPullback && pull.scriptedStage < 0)
+            if (!pull.bossPullback && pull.scriptedStage < 0 && !pull.embalmingSurvivorStand)
             {
                 DungeonClearMath::ChaseVerdict const chase =
                     DcEngageGeometry::ChaseLeash(bot, context, trash);
@@ -2822,7 +2898,8 @@ bool DungeonClearPullManeuverAction::Execute(Event /*event*/)
     // dumping the tank into "fight in place", which is why the pull-back to camp
     // worked or failed at random (a millisecond-boundary race). Clamp the elapsed.
     uint32 const legElapsed = now > since ? now - since : 0u;
-    bool const embalming = DcNaxx40Embalming::IsSlime(ObjectAccessor::GetUnit(*bot, pull.pullTarget));
+    bool const embalming = pull.embalmingSurvivorStand.has_value() ||
+        DcNaxx40Embalming::IsSlime(ObjectAccessor::GetUnit(*bot, pull.pullTarget));
     bool const patchwerk = DcNaxx40Patchwerk::IsPatrolPull(pull);
     Position const returnPoint = embalming ? DcNaxx40Embalming::RetreatPoint(camp) : camp;
     float const dist = bot->GetExactDist(&returnPoint);
@@ -3182,6 +3259,7 @@ bool DungeonClearPullManeuverAction::Execute(Event /*event*/)
     DC_PULL_TRACE("[DC:{}] pull returning: {:.1f}yd to camp ({} ms into leg)",
                   bot->GetName(), dist, legElapsed);
     bool const moved = patchwerk ? DcNaxx40Patchwerk::DrivePatrolReturn(botAI)
+        : embalming && pull.embalmingSurvivorStand ? DcNaxx40Embalming::DriveSurvivorReturn(botAI, camp)
         : pull.naxx40RangedStand && !embalming ? DcNaxx40Patchwerk::DriveSweepReturn(botAI, returnPoint)
         : DcMoveTo(bot->GetMapId(), returnPoint.GetPositionX(), returnPoint.GetPositionY(), returnPoint.GetPositionZ(),
                    /*idle*/ false, /*react*/ false, /*normal_only*/ false,

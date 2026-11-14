@@ -9,6 +9,7 @@
 #include "Ai/Dungeon/DungeonClear/DcPullContext.h"
 #include "Ai/Dungeon/DungeonClear/Action/DcActionShared.h"
 #include "Ai/Dungeon/DungeonClear/Settings/DcSettings.h"
+#include "Ai/Dungeon/DungeonClear/Data/ScriptedPullRegistry.h"
 #include "Ai/Raid/Naxx40/Naxx40Encounter.h"
 #include "Ai/Raid/Naxx40/Patchwerk40.h"
 #include "AttackersValue.h"
@@ -19,6 +20,7 @@
 #include "DcMovement.h"
 #include "DcNaxx40Embalming.h"
 #include "DcNaxx40SlimeCrossing.h"
+#include "DcPatchwerkRouteOrder.h"
 #include "DcPullPlanner.h"
 #include "DcRun.h"
 #include "DcStatusPublisher.h"
@@ -304,6 +306,48 @@ namespace
     constexpr std::size_t RouteSize = WhiteRoute.size();
     constexpr std::size_t CampCheckpoint = RouteSize - 1;
 
+    enum SectionId : std::size_t
+    {
+        Gallery, LowerRoom, Doorway, Embalming, FirstCrossing, BetweenCrossings, SecondCrossing,
+        Southwest, WestWall, WestGolems, Northwest, NorthCentre, NorthRoom, WhiteCamp, SectionCount
+    };
+
+    struct Section
+    {
+        char const* name;
+        std::size_t first;
+        std::size_t last;
+        std::array<ObjectGuid::LowType, 2> formations{};
+        ObjectGuid::LowType patrol = 0;
+    };
+
+    // Pull geometry in the upper rooms is owned by ScriptedPullRegistry.
+    // The white route owns the measured walk, crossing and pull positions below.
+    constexpr std::array<Section, SectionCount> Sections{{
+        {"gallery", 0, 0, {361146}},
+        {"lower-room", 0, 0, {361154, 361155}},
+        {"doorway", 0, 0, {361161}},
+        {"embalming-slimes", 0, 0},
+        {"first-crossing", 0, WestBank, {}, 361323},
+        {"between-crossings", WestBank + 1, OuterBank - 1},
+        {"second-crossing", OuterBank, OuterBank},
+        {"southwest", WestFirstPull, 7, {361909}},
+        {"west-wall", 8, 9, {361918}},
+        {"west-golems", WestGolemStand, WestGolemFallback},
+        {"northwest", WestTrashExit, NorthwestFallback, {361923}, 361325},
+        {"north-centre", 15, 18, {361932}},
+        {"north-room", 19, CampCheckpoint - 1, {361941}},
+        {"white-camp", CampCheckpoint, CampCheckpoint},
+    }};
+
+    SectionId SectionFor(std::size_t checkpoint)
+    {
+        for (std::size_t i = FirstCrossing; i < WhiteCamp; ++i)
+            if (checkpoint <= Sections[i].last)
+                return static_cast<SectionId>(i);
+        return WhiteCamp;
+    }
+
     bool IsWestGolemCheckpoint(std::size_t checkpoint)
     {
         return checkpoint == WestGolemStand || checkpoint == WestGolemFallback;
@@ -331,16 +375,10 @@ namespace
         return nullptr;
     }
 
-    bool HasGolemPack(Player& tank)
+    bool HasLowerEastPack(Player& tank)
     {
         return FindLiveSpawn(tank, GolemPackLeader) || FindLiveSpawn(tank, EastGolem) ||
             FindLiveSpawn(tank, WestGolem);
-    }
-
-    bool NeedsLowerRoomPull(Player& tank)
-    {
-        return tank.GetPositionY() >= -3330.0f && tank.GetPositionY() <= -3242.0f &&
-            std::abs(tank.GetPositionZ() - LowerRoomAnchor.z) <= 2.5f && HasGolemPack(tank);
     }
 
     bool IsLinkedTrash(Creature const& creature)
@@ -472,6 +510,18 @@ namespace
         return IsAtEntrance(tank) || AtApproachAnchor(tank);
     }
 
+    bool BetweenCrossingBanks(Player const& tank)
+    {
+        return std::abs(tank.GetPositionZ() - Floor) < 1.5f &&
+            tank.GetPositionX() >= 3042.0f && tank.GetPositionX() <= 3068.0f &&
+            tank.GetPositionY() >= -3233.0f && tank.GetPositionY() <= -3206.0f;
+    }
+
+    bool BeyondFirstLanding(Player const& member)
+    {
+        return BetweenCrossingBanks(member) && member.GetPositionX() <= RoutePoint(WestBank).x;
+    }
+
     bool IsNorthOfSlime(Player const& tank)
     {
         return std::abs(tank.GetPositionZ() - Floor) < 1.5f &&
@@ -519,16 +569,24 @@ namespace
         return tank.GetPositionX() < 3103.0f ? EastBank : 0;
     }
 
-    bool ClearsPatrol(Player& tank, Creature* boss, Movement::PointsArray const& points)
+    bool ClearsPatrol(Player& tank, Creature* boss, Movement::PointsArray const& points, bool withdraw = false)
     {
         if (!boss || boss->IsInCombat())
             return true;
         float const radius = DcEngageGeometry::RoomAggroSphereRadius(&tank, boss);
+        float const radiusSq = radius * radius;
         for (std::size_t i = 1; i < points.size(); ++i)
-            if (DungeonClearMath::DistSqToSegment2D(boss->GetPositionX(), boss->GetPositionY(),
-                    points[i - 1].x, points[i - 1].y, points[i].x, points[i].y) < radius * radius)
+        {
+            auto const& start = points[i - 1];
+            auto const& end = points[i];
+            float const closest = DungeonClearMath::DistSqToSegment2D(boss->GetPositionX(), boss->GetPositionY(),
+                start.x, start.y, end.x, end.y);
+            if (closest >= radiusSq)
+                continue;
+            if (!withdraw || closest + 0.01f < boss->GetExactDist2dSq(start.x, start.y))
                 return false;
-        return true;
+        }
+        return !withdraw || boss->GetExactDist2dSq(points.back().x, points.back().y) >= radiusSq;
     }
 
     bool UsesWestBackbone(std::size_t index)
@@ -538,32 +596,53 @@ namespace
             !(point.formation && RoutePoint(index - 1).formation == point.formation);
     }
 
-    std::optional<std::size_t> FindWestRejoin(Player& tank, Creature* boss)
+    bool OnFarBank(Player& tank, std::size_t landing)
     {
-        std::optional<std::size_t> nearest;
-        float bestDistance = 40.0f;
-        for (std::size_t i = WestFirstPull; i <= CampCheckpoint; ++i)
+        Checkpoint const& bank = RoutePoint(landing - 1);
+        Checkpoint const& end = RoutePoint(landing);
+        if (WestRecoveryArea(tank) || (landing == WestBank && BeyondFirstLanding(tank)))
+            return true;
+        if (tank.GetExactDist(end.x, end.y, end.z) <= Arrive)
+            return DcNaxx40SlimeCrossing::IsDryCampGround(tank,
+                {tank.GetPositionX(), tank.GetPositionY(), tank.GetPositionZ()});
+        if (tank.GetExactDist(end.x, end.y, end.z) > 32.0f ||
+            tank.GetExactDist(end.x, end.y, end.z) >= tank.GetExactDist(bank.x, bank.y, bank.z))
+            return false;
+        return !BuildSweepCampLeg(&tank, {end.x, end.y, end.z}).empty();
+    }
+
+    bool MemberAtBank(Player& member, std::size_t landing)
+    {
+        if (WestRecoveryArea(member))
+            return true;
+        Checkpoint const& end = RoutePoint(landing);
+        Checkpoint const& start = RoutePoint(landing - 1);
+        bool const beyond = landing == WestBank && BeyondFirstLanding(member);
+        bool const nearby = member.GetExactDist(end.x, end.y, end.z) <= 12.0f &&
+            member.GetExactDist(end.x, end.y, end.z) < member.GetExactDist(start.x, start.y, start.z);
+        return (beyond || nearby) && DcNaxx40SlimeCrossing::IsDryCampGround(member,
+            {member.GetPositionX(), member.GetPositionY(), member.GetPositionZ()});
+    }
+
+    bool RaidAtBank(Player& tank, std::size_t landing)
+    {
+        Group* const group = tank.GetGroup();
+        if (!group)
+            return true;
+        for (GroupReference* ref = group->GetFirstMember(); ref; ref = ref->next())
         {
-            if (!UsesWestBackbone(i))
+            Player* const member = ref->GetSource();
+            if (!member || member == &tank || !member->IsAlive() || !member->IsInMap(&tank) ||
+                !GET_PLAYERBOT_AI(member))
                 continue;
-            Checkpoint const& point = RoutePoint(i);
-            float const distance = tank.GetExactDist(point.x, point.y, point.z);
-            if (distance >= bestDistance)
-                continue;
-            if (distance > Arrive)
-            {
-                auto const path = DcNaxx40SlimeCrossing::BuildDryCampPath(&tank, {point.x, point.y, point.z});
-                if (path.empty() || !ClearsPatrol(tank, boss, path))
-                    continue;
-            }
-            nearest = i;
-            bestDistance = distance;
+            if (!MemberAtBank(*member, landing))
+                return false;
         }
-        return nearest;
+        return true;
     }
 
     SweepResult MoveToWhiteCheckpoint(PlayerbotAI* ai, std::size_t checkpoint, Checkpoint const& point,
-                                      Creature* avoidBoss = nullptr, bool dryOnly = false)
+                                      Creature* avoidBoss = nullptr, bool dryOnly = false, bool recover = false)
     {
         Player* const tank = ai->GetBot();
         G3D::Vector3 destination(point.x, point.y, point.z);
@@ -605,13 +684,24 @@ namespace
             if (points.empty() && surveyed && tank->GetExactDist(destination.x, destination.y, destination.z) <= 30.0f)
                 points = BuildSurveyedDryLeg(tank, destination);
         }
-        if (points.empty() || !ClearsPatrol(*tank, avoidBoss, points))
+        bool const tryDetour = points.empty() && recover && (!point.crossing || dryOnly);
+        if (tryDetour)
+            points = DcNaxx40SlimeCrossing::BuildPatchwerkRecoveryPath(tank,
+                {destination.x, destination.y, destination.z});
+        if (points.empty() || !ClearsPatrol(*tank, avoidBoss, points, recover || dryOnly))
             return SweepResult::Blocked;
 
         if (points.size() == 2)
             points.insert(points.begin() + 1, (points.front() + points.back()) * 0.5f);
-        return DcMovement::SplinePath(ai, points, MovementPriority::MOVEMENT_NORMAL)
-            ? SweepResult::Moving : SweepResult::Blocked;
+        if (!DcMovement::SplinePath(ai, points, MovementPriority::MOVEMENT_NORMAL))
+            return SweepResult::Blocked;
+        if (tryDetour)
+        {
+            char const* name = Sections[SectionFor(checkpoint)].name;
+            LOG_INFO("playerbots.dungeonclear", "[DC:{}] Patchwerk: route rejoin {} -> {} (dry detour to checkpoint {})",
+                tank->GetName(), name, name, checkpoint);
+        }
+        return SweepResult::Moving;
     }
 
     bool IsLiveEmbalmingSlime(Player const& tank, Creature const& creature)
@@ -668,6 +758,215 @@ namespace
         return false;
     }
 
+    bool HasWesternGolems(Player& tank)
+    {
+        for (ObjectGuid::LowType spawn = 361326; spawn <= 361329; ++spawn)
+            if (FindLiveSpawn(tank, spawn))
+                return true;
+        return false;
+    }
+
+    bool SectionHasTrash(Player& tank, SectionId section)
+    {
+        if (section == Embalming)
+            return HasLiveEmbalmingSlimes(tank);
+        if (section == WestGolems)
+            return HasWesternGolems(tank);
+
+        Section const& row = Sections[section];
+        if (row.patrol && FindLiveSpawn(tank, row.patrol))
+            return true;
+        for (ObjectGuid::LowType formation : row.formations)
+            if (formation && HasLiveFormation(tank, formation))
+                return true;
+        return section == LowerRoom && HasLowerEastPack(tank);
+    }
+
+    SectionId EntrySection(Player& tank)
+    {
+        for (std::size_t i = Gallery; i <= Embalming; ++i)
+            if (SectionHasTrash(tank, static_cast<SectionId>(i)))
+                return static_cast<SectionId>(i);
+        return FirstCrossing;
+    }
+
+    Checkpoint EntryAnchor(Player& tank, SectionId section)
+    {
+        int32 order = 0;
+        switch (section)
+        {
+            case LowerRoom:
+                if (HasLowerEastPack(tank))
+                    return LowerRoomAnchor;
+                if (HasLiveFormation(tank, 361154))
+                    return {3097.2f, -3292.6f, 0.0f, false, 294.69f};
+                break;
+            case Doorway:
+                order = 3;
+                break;
+            case Gallery:
+                break;
+            default:
+                return ApproachAnchor;
+        }
+
+        if (ScriptedPullStage const* stage = ScriptedPullRegistry::Find(tank.GetMapId(), order))
+            return {stage->HasArmAnchor() ? stage->armX : stage->campX,
+                    stage->HasArmAnchor() ? stage->armY : stage->campY, 0.0f, false,
+                    stage->HasArmAnchor() ? stage->armZ : stage->campZ};
+        return ApproachAnchor;
+    }
+
+    void ReportSection(Player& tank, DcRunState::PatchwerkSweep& sweep, SectionId section)
+    {
+        if (sweep.reportedSection == section)
+            return;
+        sweep.reportedSection = section;
+        LOG_INFO("playerbots.dungeonclear", "[DC:{}] Patchwerk: route section {} started",
+            tank.GetName(), Sections[section].name);
+    }
+
+    void CompleteSection(Player& tank, DcRunState::PatchwerkSweep& sweep, SectionId section)
+    {
+        uint32 const flag = 1u << section;
+        if (sweep.completedSections & flag)
+            return;
+        ReportSection(tank, sweep, section);
+        sweep.completedSections |= flag;
+        LOG_INFO("playerbots.dungeonclear", "[DC:{}] Patchwerk: route section {} completed",
+            tank.GetName(), Sections[section].name);
+    }
+
+    void ResetRouteTargets(AiObjectContext* context)
+    {
+        context->GetValue<std::vector<ObjectGuid>>(DcKey::RoomTrashRemaining)->Reset();
+        context->GetValue<ObjectGuid>(DcKey::PullTarget)->Reset();
+    }
+
+    bool RaidNearCamp(Player& tank)
+    {
+        Group* const group = tank.GetGroup();
+        if (!group)
+            return true;
+        for (GroupReference* ref = group->GetFirstMember(); ref; ref = ref->next())
+        {
+            Player* const member = ref->GetSource();
+            if (member && member != &tank && member->IsAlive() && member->IsInMap(&tank) &&
+                GET_PLAYERBOT_AI(member))
+            {
+                if (member->GetExactDist(&RaidCamp) > 10.0f ||
+                    !DcNaxx40SlimeCrossing::IsDryCampGround(*member,
+                        {member->GetPositionX(), member->GetPositionY(), member->GetPositionZ()}))
+                    return false;
+            }
+        }
+        return true;
+    }
+
+    std::optional<std::size_t> WestRecoveryGoal(Player& tank)
+    {
+        for (std::size_t i = Southwest; i < WhiteCamp; ++i)
+        {
+            SectionId const section = static_cast<SectionId>(i);
+            if (SectionHasTrash(tank, section))
+                return Sections[section].first;
+        }
+        return std::nullopt;
+    }
+
+    std::optional<std::size_t> FindDryWestAnchor(Player& tank, Creature* boss)
+    {
+        std::optional<std::size_t> nearest;
+        float best = 32.0f;
+        for (std::size_t i = OuterBank; i <= CampCheckpoint; ++i)
+        {
+            if (!UsesWestBackbone(i))
+                continue;
+            Checkpoint const& point = RoutePoint(i);
+            float const distance = tank.GetExactDist(point.x, point.y, point.z);
+            if (distance >= best)
+                continue;
+            if (distance > Arrive)
+            {
+                auto const path = BuildSweepCampLeg(&tank, {point.x, point.y, point.z});
+                if (path.empty() || !ClearsPatrol(tank, boss, path, true))
+                    continue;
+            }
+            nearest = i;
+            best = distance;
+        }
+        return nearest;
+    }
+
+    bool TryWestRejoin(Player& tank, AiObjectContext* context, Creature* boss, DcRunState::PatchwerkSweep& sweep)
+    {
+        if (!WestRecoveryArea(tank))
+            return false;
+
+        LoadLinkedTrashGrids(tank);
+        // Slimes on the opposite bank can respawn after a completed crossing.
+        // Closing the boss gate still requires every linked pack to be clear.
+        if (EntrySection(tank) < Embalming)
+            return false;
+        std::optional<std::size_t> const pending = WestRecoveryGoal(tank);
+        std::optional<std::size_t> entry;
+        if (!pending && tank.GetExactDist(&Camp) <= 15.0f)
+        {
+            auto const path = BuildSweepCampLeg(&tank, Camp);
+            if (AtDryCamp(tank) || (!path.empty() && ClearsPatrol(tank, boss, path, true)))
+                entry = CampCheckpoint;
+        }
+        if (!entry)
+            entry = FindDryWestAnchor(tank, boss);
+        if (!entry)
+            return false;
+
+        std::size_t const goal = pending.value_or(CampCheckpoint);
+        std::size_t const old = sweep.checkpoint;
+        std::array<bool, SectionCount> completed{};
+        for (std::size_t i = Gallery; i < FirstCrossing; ++i)
+            completed[i] = !SectionHasTrash(tank, static_cast<SectionId>(i));
+        completed[SecondCrossing] = RaidAtBank(tank, OuterBank);
+        completed[FirstCrossing] = completed[SecondCrossing];
+        completed[BetweenCrossings] = completed[SecondCrossing];
+        for (std::size_t i = Southwest; i < WhiteCamp; ++i)
+            completed[i] = !SectionHasTrash(tank, static_cast<SectionId>(i));
+
+        // The closest connection is a navigation choice. It cannot mark a
+        // crossing or a pull complete, and may lead back to the first live pack.
+        if (!completed[SecondCrossing])
+        {
+            sweep.checkpoint = OuterBank;
+            sweep.recoveryGoal.reset();
+        }
+        else if (*entry > goal)
+        {
+            sweep.checkpoint = *entry;
+            sweep.recoveryGoal = goal;
+        }
+        else
+        {
+            sweep.checkpoint = std::max(*entry, WestFirstPull);
+            sweep.recoveryGoal.reset();
+        }
+
+        for (std::size_t i = 0; i < SectionFor(std::min(sweep.checkpoint, goal)); ++i)
+        {
+            if (DcPatchwerkRouteOrder::CanResumeAt(i, i + 1, completed))
+                CompleteSection(tank, sweep, static_cast<SectionId>(i));
+        }
+        sweep.reachedCheckpoint = false;
+        sweep.followerAnchor.reset();
+        ResetRouteTargets(context);
+        LOG_INFO("playerbots.dungeonclear", "[DC:{}] Patchwerk: route rejoin {} -> {} (checkpoint {} to {}, goal {})",
+            tank.GetName(), Sections[SectionFor(old)].name, Sections[SectionFor(goal)].name, old, sweep.checkpoint,
+            goal);
+        if (tank.GetExactDist(&Camp) <= 15.0f && !LinkedTrash(tank).empty())
+            LOG_INFO("playerbots.dungeonclear", "[DC:{}] Patchwerk: route waiting white-camp: linked trash remains",
+                tank.GetName());
+        return true;
+    }
+
     SweepResult HoldRoute(PlayerbotAI* ai, std::string const& reason)
     {
         std::string const message = "Patchwerk: " + reason;
@@ -710,12 +1009,39 @@ bool UsesPatrolCamp(Player* tank, AiObjectContext* context, uint32 bossEntry)
     return CanRun(tank, context, bossEntry);
 }
 
+void ObserveEntry(Player* tank, AiObjectContext* context, uint32 bossEntry)
+{
+    if (!CanRun(tank, context, bossEntry) || SweepInProgress(tank, context, bossEntry))
+        return;
+    LoadLinkedTrashGrids(*tank);
+    auto& sweep = DcRun::Of(context).patchwerkSweep;
+    SectionId const pending = EntrySection(*tank);
+    for (std::size_t i = Gallery; i < pending; ++i)
+    {
+        SectionId const section = static_cast<SectionId>(i);
+        if (sweep.completedSections & (1u << section))
+            continue;
+        ReportSection(*tank, sweep, section);
+        CompleteSection(*tank, sweep, section);
+    }
+    if (pending < FirstCrossing)
+        ReportSection(*tank, sweep, pending);
+}
+
+bool EntryPullDue(Player& tank, uint32 order)
+{
+    SectionId const section = EntrySection(tank);
+    if (section == LowerRoom)
+        return order == 1 || order == 2;
+    return (section == Gallery && order == 0) || (section == Doorway && order == 3);
+}
+
 bool SetApproachAnchor(Player* tank, AiObjectContext* context, DungeonBossInfo& next)
 {
     if (!CanRun(tank, context, next.entry))
         return false;
-    auto const& anchor = !SweepInProgress(tank, context, next.entry) && NeedsLowerRoomPull(*tank)
-        ? LowerRoomAnchor : ApproachAnchor;
+    Checkpoint const anchor = SweepInProgress(tank, context, next.entry)
+        ? ApproachAnchor : EntryAnchor(*tank, EntrySection(*tank));
     next.x = anchor.x;
     next.y = anchor.y;
     next.z = anchor.z;
@@ -724,15 +1050,18 @@ bool SetApproachAnchor(Player* tank, AiObjectContext* context, DungeonBossInfo& 
 
 bool AtEmbalmingHandoff(Player* tank, AiObjectContext* context, uint32 bossEntry)
 {
-    return CanRun(tank, context, bossEntry) && AtApproachAnchor(*tank) &&
-        !SweepInProgress(tank, context, bossEntry) && !NeedsLowerRoomPull(*tank) &&
-        HasLiveEmbalmingSlimes(*tank);
+    if (!CanRun(tank, context, bossEntry) || SweepInProgress(tank, context, bossEntry))
+        return false;
+    auto const& pull = context->GetValue<DcPullContext&>(DcKey::PullContext)->Get();
+    return (pull.naxx40RangedStand && pull.phase != DcPullPhase::Idle) ||
+        (AtApproachAnchor(*tank) && EntrySection(*tank) == Embalming);
 }
 
 bool DeferEmbalmingUntilLowerEast(Player* tank, AiObjectContext* context, uint32 bossEntry, Unit const* target)
 {
     return CanRun(tank, context, bossEntry) && tank->GetPositionY() <= -3242.0f &&
-        !SweepInProgress(tank, context, bossEntry) && DcNaxx40Embalming::IsSlime(target) && HasGolemPack(*tank);
+        !SweepInProgress(tank, context, bossEntry) && DcNaxx40Embalming::IsSlime(target) &&
+        EntrySection(*tank) < Embalming;
 }
 
 Creature* FindEmbalmingPull(PlayerbotAI* ai, ObjectGuid excluded)
@@ -764,7 +1093,7 @@ std::optional<Position> SweepPullCamp(Player* tank, AiObjectContext* context, ui
     if (!SweepInProgress(tank, context, bossEntry))
         return std::nullopt;
     auto const& sweep = DcRun::Of(context).patchwerkSweep;
-    if (!sweep.reachedCheckpoint || sweep.returningToWestStart || sweep.checkpoint >= CampCheckpoint)
+    if (!sweep.reachedCheckpoint || sweep.recoveryGoal || sweep.checkpoint >= CampCheckpoint)
         return std::nullopt;
     Checkpoint const& point = RoutePoint(sweep.checkpoint);
     if (!point.camp || tank->GetExactDist(point.x, point.y, point.z) > Arrive)
@@ -802,7 +1131,7 @@ void HoldForEmbalming(PlayerbotAI* ai)
 
 void NoteClearedLowerEast(Player* tank, AiObjectContext* context, uint32 bossEntry)
 {
-    if (!CanRun(tank, context, bossEntry) || HasGolemPack(*tank))
+    if (!CanRun(tank, context, bossEntry) || HasLowerEastPack(*tank))
         return;
     auto& sweep = DcRun::Of(context).patchwerkSweep;
     if (sweep.reportedEastClear)
@@ -1041,9 +1370,10 @@ SweepResult DriveGrobbulusCamp(PlayerbotAI* ai)
 
 bool ShouldStart(Player* tank, AiObjectContext* context, uint32 bossEntry)
 {
-    return CanRun(tank, context, bossEntry) &&
-        (InsideWestApproach(*tank) || WestRecoveryArea(*tank) ||
-         (AtSweepEntrance(*tank) && !HasLiveEmbalmingSlimes(*tank)));
+    if (!CanRun(tank, context, bossEntry))
+        return false;
+    return InsideWestApproach(*tank) || WestRecoveryArea(*tank) ||
+        ((AtSweepEntrance(*tank) || BetweenCrossingBanks(*tank)) && EntrySection(*tank) == FirstCrossing);
 }
 
 bool SweepInProgress(Player* tank, AiObjectContext* context, uint32 bossEntry)
@@ -1054,13 +1384,81 @@ bool SweepInProgress(Player* tank, AiObjectContext* context, uint32 bossEntry)
     return sweep.instanceId == tank->GetInstanceId();
 }
 
+bool HasRouteFollowerAnchor(Player* tank, AiObjectContext* context, uint32 bossEntry)
+{
+    if (!SweepInProgress(tank, context, bossEntry))
+        return false;
+    auto const& run = DcRun::Of(context);
+    auto const& pull = context->GetValue<DcPullContext&>(DcKey::PullContext)->Get();
+    return !run.paused && run.patchwerkSweep.followerAnchor && pull.phase == DcPullPhase::Idle;
+}
+
+bool DriveRouteFollower(PlayerbotAI* ai, Player* tank)
+{
+    Player* const member = ai->GetBot();
+    if (!IsNaxx40Map(member->FindMap()) || !member->IsInMap(tank) || member->IsInCombat())
+        return false;
+    PlayerbotAI* const tankAI = GET_PLAYERBOT_AI(tank);
+    if (!tankAI)
+        return false;
+    AiObjectContext* const context = tankAI->GetAiObjectContext();
+    auto const next = context->GetValue<std::optional<DungeonBossInfo>>(DcKey::NextDungeonBoss)->Get();
+    auto const& run = DcRun::Of(context);
+    auto const& sweep = run.patchwerkSweep;
+    if (!next || !HasRouteFollowerAnchor(tank, context, next->entry))
+        return false;
+
+    Position anchor = *sweep.followerAnchor;
+    bool const crossing = sweep.checkpoint == WestBank || sweep.checkpoint == OuterBank;
+    bool shallowExit = false;
+    if (DcRun::Of(ai).Throttled(DcThrottle::Naxx40PatchwerkFollower, 500))
+        return true;
+    if (crossing)
+    {
+        if (MemberAtBank(*member, sweep.checkpoint))
+            return true;
+        Checkpoint const& departure = RoutePoint(sweep.checkpoint - 1);
+        Checkpoint const& landing = RoutePoint(sweep.checkpoint);
+        if (sweep.checkpoint == WestBank && BeyondFirstLanding(*member))
+        {
+            Checkpoint const& dry = RoutePoint(WestBank + 1);
+            anchor.Relocate(dry.x, dry.y, dry.z);
+            shallowExit = true;
+        }
+        else
+        {
+            if (anchor.GetPositionX() == landing.x && DcNaxx40SlimeCrossing::IsNearBank(member) &&
+                DcNaxx40SlimeCrossing::TryCross(ai, {{landing.x, landing.y, landing.z}}))
+                return true;
+            if (!OnFarBank(*member, sweep.checkpoint))
+                anchor.Relocate(departure.x, departure.y, departure.z);
+        }
+    }
+
+    G3D::Vector3 const destination(anchor.GetPositionX(), anchor.GetPositionY(), anchor.GetPositionZ());
+    if (DcMovement::OwnsRunningEscort(member) &&
+        (member->movespline->FinalDestination() - destination).squaredLength() <= 1.0f)
+        return true;
+    if (member->GetMotionMaster()->GetCurrentMovementGeneratorType() == FOLLOW_MOTION_TYPE)
+        DcMovement::StopBot(member, DcMovement::Stop::Hold);
+    if (member->GetExactDist(&anchor) <= Arrive || !ai->CanMove() || member->IsFalling())
+        return true;
+    auto path = BuildSweepCampLeg(member, anchor);
+    if (path.empty() && shallowExit)
+        path = DcNaxx40SlimeCrossing::BuildPatchwerkRecoveryPath(member, anchor);
+    Creature* const boss = DcTargeting::GetLiveBoss(tank, context, Naxx40PatchwerkEntry);
+    if (!path.empty() && ClearsPatrol(*member, boss, path, true))
+        DcMovement::SplinePath(ai, path, MovementPriority::MOVEMENT_NORMAL);
+    return true;
+}
+
 std::vector<ObjectGuid> LocalTrash(Player* tank, AiObjectContext* context)
 {
     if (!CanRun(tank, context, Naxx40PatchwerkEntry) || DcRun::Of(context).paused)
         return {};
 
     DcRunState::PatchwerkSweep const& sweep = DcRun::Of(context).patchwerkSweep;
-    if (sweep.instanceId != tank->GetInstanceId() || sweep.returningToWestStart)
+    if (sweep.instanceId != tank->GetInstanceId() || sweep.recoveryGoal)
         return {};
     if (sweep.checkpoint >= CampCheckpoint)
         return AtDryCamp(*tank) ? ReachableSurvivors(*tank, context) : std::vector<ObjectGuid>{};
@@ -1102,40 +1500,30 @@ SweepResult Drive(PlayerbotAI* ai, AiObjectContext* context, uint32 bossEntry)
 
     Creature* const boss = DcTargeting::GetLiveBoss(tank, context, Naxx40PatchwerkEntry);
     DcRunState::PatchwerkSweep& sweep = DcRun::Of(context).patchwerkSweep;
-    if (sweep.instanceId != tank->GetInstanceId())
+    bool const fresh = sweep.instanceId != tank->GetInstanceId();
+    if (fresh)
     {
-        if (!west && (!AtSweepEntrance(*tank) || HasLiveEmbalmingSlimes(*tank)))
-            return SweepResult::Inactive;
-
         LoadLinkedTrashGrids(*tank);
-        std::size_t start = 0;
-        if (west)
+        bool const between = BetweenCrossingBanks(*tank);
+        if (!west && (EntrySection(*tank) < FirstCrossing || (!AtSweepEntrance(*tank) && !between)))
+            return SweepResult::Inactive;
+        ObserveEntry(tank, context, bossEntry);
+        sweep.checkpoint = 0;
+        sweep.reachedCheckpoint = false;
+        sweep.recoveryGoal.reset();
+        if (west && !TryWestRejoin(*tank, context, boss, sweep))
+            return HoldRoute(ai, "route waiting southwest: no dry rejoin or earlier trash remains");
+        if (!west && OnFarBank(*tank, WestBank))
         {
-            if (LinkedTrash(*tank).empty() && AtDryCamp(*tank))
-                start = CampCheckpoint;
-            else
-            {
-                auto const rejoin = FindWestRejoin(*tank, boss);
-                if (!rejoin)
-                    return HoldRoute(ai, "no clear dry path to a west route checkpoint.");
-                start = *rejoin;
-            }
+            sweep.checkpoint = WestBank;
+            Checkpoint const& bank = RoutePoint(WestBank);
+            sweep.followerAnchor = Position(bank.x, bank.y, bank.z);
         }
-        else
-        {
-            if (HasGolemPack(*tank))
-                return HoldRoute(ai, "lower east formation 361155 still alive; resume from the lower room.");
-            start = WhiteRouteEntry(*tank);
-        }
-
-        sweep = {};
         sweep.instanceId = tank->GetInstanceId();
-        sweep.checkpoint = start;
-        sweep.returningToWestStart = west && start > WestFirstPull && !LinkedTrash(*tank).empty();
         DcMovement::StopBot(tank, DcMovement::Stop::Hold);
         LOG_INFO("playerbots.dungeonclear", "[DC:{}] Patchwerk: {} at checkpoint {} ({:.1f},{:.1f},{:.1f})",
             tank->GetName(), west ? "rejoining the west route" : "starting the west trash sweep",
-            start, tank->GetPositionX(), tank->GetPositionY(), tank->GetPositionZ());
+            sweep.checkpoint, tank->GetPositionX(), tank->GetPositionY(), tank->GetPositionZ());
     }
 
     if (sweep.checkpoint >= RouteSize)
@@ -1146,21 +1534,40 @@ SweepResult Drive(PlayerbotAI* ai, AiObjectContext* context, uint32 bossEntry)
         sweep.reachedCheckpoint = false;
     }
 
-    if (sweep.returningToWestStart)
+    // A combat or manual move can leave us on a different part of the route.
+    // Reconcile before asking the mover for the old point again.
+    Checkpoint const& expected = RoutePoint(sweep.checkpoint);
+    uint32 const now = getMSTime();
+    bool const mayProbe = !sweep.nextRecoveryProbe ||
+        getMSTimeDiff(sweep.nextRecoveryProbe, now) >= 1800;
+    if (!sweep.recoveryGoal && west && mayProbe && !DcMovement::OwnsRunningEscort(tank) &&
+        tank->GetExactDist(expected.x, expected.y, expected.z) > 35.0f)
     {
-        SweepResult const movement = MoveToWhiteCheckpoint(ai, sweep.checkpoint, RoutePoint(sweep.checkpoint), boss,
-                                                            /*dryOnly*/ true);
+        sweep.nextRecoveryProbe = now;
+        if (!TryWestRejoin(*tank, context, boss, sweep))
+            return HoldRoute(ai, "route waiting west: cannot rejoin without crossing gosma or bypassing trash");
+    }
+
+    if (sweep.recoveryGoal)
+    {
+        Checkpoint const& recovery = RoutePoint(sweep.checkpoint);
+        SweepResult const movement = MoveToWhiteCheckpoint(ai, sweep.checkpoint, recovery, boss, true, mayProbe);
         if (movement == SweepResult::Blocked)
-            return HoldRoute(ai, "waiting for a dry return to checkpoint " + std::to_string(sweep.checkpoint) + ".");
+        {
+            if (mayProbe)
+                sweep.nextRecoveryProbe = now;
+            return HoldRoute(ai, "route waiting " + std::string(Sections[SectionFor(sweep.checkpoint)].name) +
+                ": no dry return to the pending pack");
+        }
         if (movement == SweepResult::Moving)
             return movement;
-        if (sweep.checkpoint == WestFirstPull)
-            sweep.returningToWestStart = false;
+        if (sweep.checkpoint == *sweep.recoveryGoal)
+            sweep.recoveryGoal.reset();
         else
         {
             do
                 --sweep.checkpoint;
-            while (!UsesWestBackbone(sweep.checkpoint));
+            while (sweep.checkpoint > *sweep.recoveryGoal && !UsesWestBackbone(sweep.checkpoint));
             return SweepResult::Moving;
         }
     }
@@ -1168,17 +1575,19 @@ SweepResult Drive(PlayerbotAI* ai, AiObjectContext* context, uint32 bossEntry)
     // Combat can end far from a checkpoint whose pull stand was already
     // reached. Re-acquire the stand before asking what can be pulled from it.
     Checkpoint const& point = RoutePoint(sweep.checkpoint);
+    SectionId const section = SectionFor(sweep.checkpoint);
+    ReportSection(*tank, sweep, section);
     if (sweep.reachedCheckpoint && tank->GetExactDist(point.x, point.y, point.z) > Arrive)
     {
         sweep.reachedCheckpoint = false;
-        context->GetValue<std::vector<ObjectGuid>>(DcKey::RoomTrashRemaining)->Reset();
-        context->GetValue<ObjectGuid>(DcKey::PullTarget)->Reset();
+        ResetRouteTargets(context);
     }
     if (sweep.checkpoint == CampCheckpoint && AtDryCamp(*tank))
     {
         LoadLinkedTrashGrids(*tank);
         auto const remaining = LinkedTrash(*tank);
-        if (!remaining.empty())
+        auto const campDecision = DcPatchwerkRouteOrder::CampDecision(remaining.empty(), true, RaidNearCamp(*tank));
+        if (campDecision == DcPatchwerkRouteOrder::CampResult::ClearTrash)
         {
             if (!LocalTrash(tank, context).empty())
                 return SweepResult::Clearing;
@@ -1196,27 +1605,60 @@ SweepResult Drive(PlayerbotAI* ai, AiObjectContext* context, uint32 bossEntry)
                         tank->GetName(), remaining.size(), nearest->GetName(), nearest->GetSpawnId(),
                         nearest->GetPositionX(), nearest->GetPositionY(), nearest->GetPositionZ());
             }
-            return HoldRoute(ai, "linked trash still alive outside the safe pull area of the camp.");
+            if (mayProbe)
+            {
+                sweep.nextRecoveryProbe = now;
+                if (WestRecoveryGoal(*tank) && TryWestRejoin(*tank, context, boss, sweep))
+                    return SweepResult::Moving;
+            }
+            return HoldRoute(ai, "route waiting white-camp: linked trash still alive outside the safe pull area");
         }
+        sweep.followerAnchor = RaidCamp;
+        if (campDecision == DcPatchwerkRouteOrder::CampResult::Gather)
+            return HoldRoute(ai, "route waiting white-camp: gathering the raid at the dry camp");
         sweep.checkpoint = RouteSize;
+        CompleteSection(*tank, sweep, WhiteCamp);
         LOG_INFO("playerbots.dungeonclear", "[DC:{}] Patchwerk: linked trash clear, waiting at the white camp",
                  tank->GetName());
         return SweepResult::Waiting;
     }
 
-    if (!sweep.reachedCheckpoint && tank->GetExactDist(point.x, point.y, point.z) > Arrive)
+    bool const atFarBank = point.crossing && OnFarBank(*tank, sweep.checkpoint);
+    if (section >= NorthRoom && !sweep.followerAnchor)
+        sweep.followerAnchor = NorthRoomCamp;
+    if (!sweep.reachedCheckpoint && tank->GetExactDist(point.x, point.y, point.z) > Arrive && !atFarBank)
     {
-        SweepResult const movement = MoveToWhiteCheckpoint(ai, sweep.checkpoint, point, boss);
-        return movement == SweepResult::Blocked
-            ? HoldRoute(ai, "waiting for safe movement to checkpoint " + std::to_string(sweep.checkpoint) + ".")
-            : movement;
+        SweepResult const movement = MoveToWhiteCheckpoint(ai, sweep.checkpoint, point, boss, false, mayProbe);
+        if (movement != SweepResult::Blocked)
+            return movement;
+        if (mayProbe)
+            sweep.nextRecoveryProbe = now;
+        return HoldRoute(ai, "route waiting " + std::string(Sections[section].name) +
+            ": no safe movement to checkpoint " + std::to_string(sweep.checkpoint));
     }
 
-    if (point.crossing && sweep.checkpoint != sweep.lastCrossingReported)
+    if (point.crossing)
     {
-        sweep.lastCrossingReported = sweep.checkpoint;
-        LOG_INFO("playerbots.dungeonclear", "[DC:{}] Patchwerk: arrived at crossing {} ({:.1f},{:.1f},{:.1f})",
-            tank->GetName(), sweep.checkpoint == WestBank ? 1 : 2, point.x, point.y, point.z);
+        sweep.followerAnchor = Position(point.x, point.y, point.z);
+        if (!RaidAtBank(*tank, sweep.checkpoint))
+            return HoldRoute(ai, "route waiting " + std::string(Sections[section].name) +
+                ": waiting for the raid on the destination bank");
+        if (tank->GetExactDist(point.x, point.y, point.z) > Arrive && point.radius > 0.0f &&
+            !LinkedTrash(*tank, &point).empty())
+        {
+            SweepResult const movement = MoveToWhiteCheckpoint(ai, sweep.checkpoint, point, boss, true, mayProbe);
+            if (movement != SweepResult::Blocked)
+                return movement;
+            if (mayProbe)
+                sweep.nextRecoveryProbe = now;
+            return HoldRoute(ai, "route waiting second-crossing: no dry approach to the landing pull");
+        }
+        if (sweep.checkpoint != sweep.lastCrossingReported)
+        {
+            sweep.lastCrossingReported = sweep.checkpoint;
+            LOG_INFO("playerbots.dungeonclear", "[DC:{}] Patchwerk: arrived at crossing {} ({:.1f},{:.1f},{:.1f})",
+                tank->GetName(), sweep.checkpoint == WestBank ? 1 : 2, point.x, point.y, point.z);
+        }
     }
 
     if (point.radius > 0.0f)
@@ -1225,25 +1667,22 @@ SweepResult Drive(PlayerbotAI* ai, AiObjectContext* context, uint32 bossEntry)
         {
             sweep.reachedCheckpoint = true;
             DcMovement::StopBot(tank, DcMovement::Stop::Hold);
-            context->GetValue<std::vector<ObjectGuid>>(DcKey::RoomTrashRemaining)->Reset();
-            context->GetValue<ObjectGuid>(DcKey::PullTarget)->Reset();
+            ResetRouteTargets(context);
         }
         auto const& targets = context->GetValue<std::vector<ObjectGuid>>(DcKey::RoomTrashRemaining)->Get();
         if (!targets.empty())
             return SweepResult::Clearing;
         if (point.patrol && FindLiveSpawn(*tank, point.patrol))
-            return HoldRoute(ai, "waiting for patrol spawn " + std::to_string(point.patrol) +
+            return HoldRoute(ai, "route waiting " + std::string(Sections[section].name) + ": patrol spawn " +
+                std::to_string(point.patrol) +
                 " to reach the dry pull position.");
         else if (IsWestGolemCheckpoint(sweep.checkpoint))
         {
-            bool live = false;
-            for (ObjectGuid::LowType spawn = 361326; spawn <= 361329; ++spawn)
-                if (FindLiveSpawn(*tank, spawn))
-                    live = true;
+            bool const live = HasWesternGolems(*tank);
             if (live && sweep.checkpoint == WestGolemFallback)
                 return HoldRoute(ai, "western Golems remain outside the firing position.");
             if (!live)
-                sweep.checkpoint = WestTrashExit - 1;
+                sweep.checkpoint = Sections[section].last;
         }
         else if (point.formation)
         {
@@ -1260,10 +1699,15 @@ SweepResult Drive(PlayerbotAI* ai, AiObjectContext* context, uint32 bossEntry)
         }
     }
 
+    if (sweep.checkpoint == Sections[section].last && !SectionHasTrash(*tank, section))
+        CompleteSection(*tank, sweep, section);
+    if (point.crossing)
+        sweep.followerAnchor.reset();
     ++sweep.checkpoint;
+    if (RoutePoint(sweep.checkpoint).crossing)
+        sweep.followerAnchor = Position(point.x, point.y, point.z);
     sweep.reachedCheckpoint = false;
-    context->GetValue<std::vector<ObjectGuid>>(DcKey::RoomTrashRemaining)->Reset();
-    context->GetValue<ObjectGuid>(DcKey::PullTarget)->Reset();
+    ResetRouteTargets(context);
     return SweepResult::Moving;
 }
 }

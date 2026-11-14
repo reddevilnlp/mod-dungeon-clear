@@ -37,6 +37,8 @@ namespace DcNaxx40Patchwerk
 
     bool BlocksBossPull(Player* tank, AiObjectContext* context, uint32 bossEntry);
     bool UsesPatrolCamp(Player* tank, AiObjectContext* context, uint32 bossEntry);
+    void ObserveEntry(Player* tank, AiObjectContext* context, uint32 bossEntry);
+    bool EntryPullDue(Player& tank, uint32 order);
     bool SetApproachAnchor(Player* tank, AiObjectContext* context, DungeonBossInfo& next);
     bool AtEmbalmingHandoff(Player* tank, AiObjectContext* context, uint32 bossEntry);
     bool DeferEmbalmingUntilLowerEast(Player* tank, AiObjectContext* context, uint32 bossEntry, Unit const* target);
@@ -60,6 +62,8 @@ namespace DcNaxx40Patchwerk
     SweepResult DriveGrobbulusCamp(PlayerbotAI* ai);
     bool ShouldStart(Player* tank, AiObjectContext* context, uint32 bossEntry);
     bool SweepInProgress(Player* tank, AiObjectContext* context, uint32 bossEntry);
+    bool HasRouteFollowerAnchor(Player* tank, AiObjectContext* context, uint32 bossEntry);
+    bool DriveRouteFollower(PlayerbotAI* ai, Player* tank);
     std::vector<ObjectGuid> LocalTrash(Player* tank, AiObjectContext* context);
     SweepResult Drive(PlayerbotAI* ai, AiObjectContext* context, uint32 bossEntry);
 }
