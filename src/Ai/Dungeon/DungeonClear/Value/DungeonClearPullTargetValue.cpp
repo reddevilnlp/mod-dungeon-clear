@@ -12,6 +12,8 @@
 #include "Ai/Dungeon/DungeonClear/Value/DungeonBossesValue.h"
 #include "Ai/Dungeon/DungeonClear/Data/ScriptedPullRegistry.h"
 #include "Ai/Dungeon/DungeonClear/Util/DcTickMemo.h"
+#include "Ai/Dungeon/DungeonClear/Util/DcNaxx40Patchwerk.h"
+#include "Creature.h"
 #include "Ai/Dungeon/DungeonClear/DcValueKeys.h"
 
 ObjectGuid DungeonClearPullTargetValue::Calculate()
@@ -44,18 +46,33 @@ ObjectGuid DungeonClearPullTargetValue::Calculate()
     // instability being removed. Death/abort/door/distance release it.
     DcPullContext const& pull =
         context->GetValue<DcPullContext&>(DcKey::PullContext)->Get();
+    std::optional<DungeonBossInfo> const next =
+        context->GetValue<std::optional<DungeonBossInfo>>(DcKey::NextDungeonBoss)->Get();
+    if (!next)
+        return ObjectGuid::Empty;
+
+    // At the end of the approach there is no forward corridor left to scan.
+    if (pull.naxx40RangedStand && (pull.phase == DcPullPhase::Forming || pull.phase == DcPullPhase::Advancing))
+        return pull.pullTarget;
+    if (DcNaxx40Patchwerk::AtEmbalmingHandoff(bot, context, next->entry))
+    {
+        if (pull.phase == DcPullPhase::Forming || pull.phase == DcPullPhase::Advancing)
+            return pull.pullTarget;
+        if (Creature* slime = DcNaxx40Patchwerk::FindEmbalmingPull(botAI, pull.abortTarget))
+            if (!DcNaxx40Patchwerk::DeferEmbalmingUntilLowerEast(bot, context, next->entry, slime))
+                return slime->GetGUID();
+        return ObjectGuid::Empty;
+    }
+
     if (!pull.decisionTarget.IsEmpty())
     {
         Unit* sticky = ObjectAccessor::GetUnit(*bot, pull.decisionTarget);
-        if (sticky && DcTargeting::IsStickyPullTargetValid(bot, context, sticky))
+        if (sticky && !DcNaxx40Patchwerk::DeferEmbalmingUntilLowerEast(bot, context, next->entry, sticky) &&
+            DcTargeting::IsStickyPullTargetValid(bot, context, sticky))
             return pull.decisionTarget;
     }
 
-    std::optional<DungeonBossInfo> next =
-        context->GetValue<std::optional<DungeonBossInfo>>(DcKey::NextDungeonBoss)->Get();
-    if (!next.has_value())
-        return ObjectGuid::Empty;
-
     Unit* fresh = DcTargeting::FindPullTarget(botAI, *next);
-    return fresh ? fresh->GetGUID() : ObjectGuid::Empty;
+    return fresh && !DcNaxx40Patchwerk::DeferEmbalmingUntilLowerEast(bot, context, next->entry, fresh)
+        ? fresh->GetGUID() : ObjectGuid::Empty;
 }

@@ -66,10 +66,13 @@
 #include "Ai/Dungeon/DungeonClear/Util/DcPullDecision.h"
 #include "Ai/Dungeon/DungeonClear/Util/DcPullDecisionIo.h"
 #include "Ai/Dungeon/DungeonClear/Util/DcLabTap.h"
+#include "Ai/Dungeon/DungeonClear/Util/DcNaxx40Patchwerk.h"
+#include "Ai/Dungeon/DungeonClear/Util/DcNaxx40SlimeCrossing.h"
 #include "Ai/Dungeon/DungeonClear/Util/DungeonPathFollower.h"
 #include "Ai/Dungeon/DungeonClear/Util/NavmeshSnap.h"
 #include "Ai/Dungeon/DungeonClear/Value/DungeonClearLiveBossValue.h"
 #include "Ai/Dungeon/DungeonClear/DcValueKeys.h"
+#include "Ai/Raid/Naxx40/Naxx40Encounter.h"
 
 namespace
 {
@@ -189,6 +192,15 @@ Position DcPullPlanner::ComputeCampSlot(Player* bot, Position const& camp)
     float const fx = camp.GetPositionX() + off.dx;
     float const fy = camp.GetPositionY() + off.dy;
     float const fz = camp.GetPositionZ();
+    bool const naxx40 = IsNaxx40Map(bot->FindMap());
+    auto const fallback = [&]()
+    {
+        if (!naxx40 || DcNaxx40SlimeCrossing::IsDryCampGround(
+                *bot, {camp.GetPositionX(), camp.GetPositionY(), fz}))
+            return camp;
+        // No dry slot or anchor. Hold here and let the slime strategy handle any escape.
+        return bot->GetPosition();
+    };
 
     // Route the fuzzed point through the navmesh. PathGenerator clamps an
     // off-mesh destination to the nearest walkable poly, so its actual endpoint
@@ -200,8 +212,9 @@ Position DcPullPlanner::ComputeCampSlot(Player* bot, Position const& camp)
     // worse spot than the anchor itself.
     PathGenerator gen(bot);
     gen.CalculatePath(fx, fy, fz, /*forceDest*/ false);
-    if (gen.GetPathType() & (PATHFIND_NOPATH | PATHFIND_FARFROMPOLY))
-        return camp;
+    if ((gen.GetPathType() & (PATHFIND_NOPATH | PATHFIND_FARFROMPOLY)) ||
+        (naxx40 && gen.GetPathType() != PATHFIND_NORMAL))
+        return fallback();
 
     G3D::Vector3 const end = gen.GetActualEndPosition();
     Position const slot(end.x, end.y, end.z, camp.GetOrientation());
@@ -210,7 +223,10 @@ Position DcPullPlanner::ComputeCampSlot(Player* bot, Position const& camp)
     // 25-man legitimately parks ~10yd out, which the old fixed 3yd cap — sized
     // for the 1-2yd fan — would have rejected wholesale.
     if (camp.GetExactDist(&slot) > ringRadius + 2.0f)
-        return camp;
+        return fallback();
+
+    if (naxx40 && (std::abs(end.z - fz) > 3.0f || !DcNaxx40SlimeCrossing::IsDryCampGround(*bot, end)))
+        return fallback();
 
     // The anchor was screened for hazards when it was chosen, but this fan-out
     // moves each follower 1-2yd off it — enough to push a bot camped just
@@ -218,7 +234,7 @@ Position DcPullPlanner::ComputeCampSlot(Player* bot, Position const& camp)
     // which is known clean; a couple of stacked followers is a much cheaper
     // problem than one standing in the aura.
     if (DcHazard::PointIsHot(bot, slot.GetPositionX(), slot.GetPositionY(), slot.GetPositionZ()))
-        return camp;
+        return fallback();
 
     return slot;
 }
@@ -1051,7 +1067,8 @@ std::optional<Position> DcPullPlanner::ComputeSafeCamp(PlayerbotAI* botAI, Unit*
     // Cheap gates first (registry Find) — every pull in every dungeon gets here.
     if (std::optional<DungeonBossInfo> const next =
             ctx->GetValue<std::optional<DungeonBossInfo>>(DcKey::NextDungeonBoss)->Get())
-        if (RoomAggroRegistry::Find(bot->GetMapId(), next->entry) &&
+        if ((RoomAggroRegistry::Find(bot->GetMapId(), next->entry) ||
+             DcNaxx40Patchwerk::SweepInProgress(bot, ctx, next->entry)) &&
             DcTargeting::IsRoomClearActive(bot, ctx))
             if (Creature* const boss = DcTargeting::GetLiveBoss(bot, ctx, next->entry))
                 if (!boss->IsInCombat())

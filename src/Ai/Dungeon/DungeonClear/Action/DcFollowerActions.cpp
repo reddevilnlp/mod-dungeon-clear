@@ -25,6 +25,7 @@
 #include "Map.h"
 #include "ModelIgnoreFlags.h"
 #include "MotionMaster.h"
+#include "MoveSpline.h"
 #include "MoveSplineInitArgs.h"
 #include "ObjectAccessor.h"
 #include "PathGenerator.h"
@@ -56,6 +57,9 @@
 #include "Ai/Dungeon/DungeonClear/Util/ChunkedPathfinder.h"
 #include "Ai/Dungeon/DungeonClear/Util/DcDoorPolicy.h"
 #include "Ai/Dungeon/DungeonClear/Util/DcMovement.h"
+#include "Ai/Dungeon/DungeonClear/Util/DcNaxx40Embalming.h"
+#include "Ai/Dungeon/DungeonClear/Util/DcNaxx40Patchwerk.h"
+#include "Ai/Dungeon/DungeonClear/Util/DcNaxx40SlimeCrossing.h"
 #include "Ai/Dungeon/DungeonClear/Util/DcPartyState.h"
 #include "Ai/Dungeon/DungeonClear/Util/DcPathWorker.h"
 #include "Ai/Dungeon/DungeonClear/Util/DcRezRecovery.h"
@@ -72,6 +76,8 @@
 #include "Ai/Dungeon/DungeonClear/Util/SwimPathfinder.h"
 #include "Ai/Dungeon/DungeonClear/Util/DcPartyWideChain.h"
 #include "Ai/Dungeon/DungeonClear/Value/DungeonClearStateValues.h"
+#include "Ai/Raid/Naxx40/Naxx40Encounter.h"
+#include "Ai/Raid/Naxx40/Naxx40Slime.h"
 #include "Playerbots.h"
 #include "DcActionShared.h"
 #include "Ai/Dungeon/DungeonClear/DcValueKeys.h"
@@ -214,6 +220,9 @@ namespace
 
 bool DungeonClearFollowTankAction::Execute(Event /*event*/)
 {
+    if (DcNaxx40SlimeCrossing::CrossingActive(bot))
+        return true;
+
     // A recovery in progress and this bot is the one walking to the corpse:
     // following the tank is exactly the wrong thing to do. See StandDownForRezzer.
     if (StandDownForRezzer(bot))
@@ -280,6 +289,13 @@ bool DungeonClearFollowTankAction::Execute(Event /*event*/)
                   "[DC:{}] follow-tank: leader dropping down the hole -> holding at "
                   "the ledge top until it lands", bot->GetName());
         return true;
+    }
+
+    if (DcNaxx40SlimeCrossing::IsNearBank(bot) && bot->IsInMap(tank))
+    {
+        G3D::Vector3 const target(tank->GetPositionX(), tank->GetPositionY(), tank->GetPositionZ());
+        if (DcNaxx40SlimeCrossing::TryCrossTowards(botAI, target))
+            return true;
     }
 
     // Loot yield (with commit-timeout). Followers run ONLY this action while DC
@@ -811,15 +827,88 @@ bool DungeonClearFilterLootAction::Execute(Event /*event*/)
 }
 bool DungeonClearCampHoldActionBase::Execute(Event /*event*/)
 {
+    if (IsNaxx40SlimeEscapeActive(*botAI) || DcNaxx40SlimeCrossing::CrossingActive(bot))
+        return false;
+
     // The camp is not this bot's business while it owes the party a rez — a camp
     // pin is one more mover cancelling the approach. See StandDownForRezzer.
     if (StandDownForRezzer(bot))
         return false;
 
+    if (std::optional<Position> const slot = DcNaxx40Patchwerk::PatrolPosition(bot))
+    {
+        if (DcInGroundEffect(context) || bot->IsFalling() || !IsMovingAllowed() ||
+            !DcNaxx40SlimeCrossing::IsDryCampGround(
+                *bot, {bot->GetPositionX(), bot->GetPositionY(), bot->GetPositionZ()}))
+            return false;
+
+        MotionMaster* const motion = bot->GetMotionMaster();
+        if (motion->GetCurrentMovementGeneratorType() == CHASE_MOTION_TYPE ||
+            motion->GetCurrentMovementGeneratorType() == FOLLOW_MOTION_TYPE)
+            motion->MovementExpired(false);
+
+        if (bot->GetExactDist(&*slot) <= DC_PULL_SLOT_RADIUS)
+        {
+            DcMovement::StopBot(bot, DcMovement::Stop::Hold);
+            return false;
+        }
+
+        G3D::Vector3 const target(slot->GetPositionX(), slot->GetPositionY(), slot->GetPositionZ());
+        if (DcMovement::OwnsRunningEscort(bot) &&
+            (bot->movespline->FinalDestination() - target).squaredLength() <= 1.0f)
+            return false;
+
+        if (DcNaxx40SlimeCrossing::TryCrossTowards(botAI, target))
+            return true;
+        Movement::PointsArray path = DcNaxx40SlimeCrossing::BuildDryCampPath(bot, *slot);
+        if (path.empty())
+        {
+            DcMovement::StopBot(bot, DcMovement::Stop::Hold);
+            return false;
+        }
+        return DcMovement::SplinePath(botAI, path, MovementPriority::MOVEMENT_COMBAT, FORCED_MOVEMENT_RUN);
+    }
+
     Position camp;
     bool passive = false;
-    if (!DcLeaderSignal::GetLeaderCampHold(bot, camp, passive))
+    bool const hasCamp = DcLeaderSignal::GetLeaderCampHold(bot, camp, passive);
+    bool isPuller = false;
+    std::optional<Position> const embalmingCamp = DcNaxx40Embalming::GetCamp(bot, &isPuller);
+    if (embalmingCamp)
+    {
+        camp = *embalmingCamp;
+        if (!DcNaxx40Embalming::CanAttackFromCamp(bot) || bot->HasUnitState(UNIT_STATE_MELEE_ATTACKING))
+            bot->AttackStop();
+        MotionMaster* const motion = bot->GetMotionMaster();
+        if (motion->GetCurrentMovementGeneratorType() == CHASE_MOTION_TYPE)
+            motion->MovementExpired(false);
+        if (!isPuller && passive)
+            DcFollowerLifecycle::ApplyFollowerPassive(bot);
+        if (DcInGroundEffect(context))
+            return false;
+
+        Position destination = camp;
+        if (!DcNaxx40Embalming::FindSaferSpot(botAI, camp, destination))
+        {
+            DcMovement::StopBot(bot, DcMovement::Stop::Hold);
+            return false;
+        }
+        if (bot->GetExactDist(&destination) > DC_PULL_SLOT_RADIUS)
+        {
+            DcMoveTo(bot->GetMapId(), destination.GetPositionX(), destination.GetPositionY(),
+                     destination.GetPositionZ(), false, false, false, false, MovementPriority::MOVEMENT_COMBAT);
+            return true;
+        }
+        DcMovement::StopBot(bot, DcMovement::Stop::Hold);
+        return false; // Let ranged cast and healers heal from their position.
+    }
+    if (!hasCamp)
         return false;
+
+    bool const naxx40 = IsNaxx40Map(bot->FindMap());
+    if (naxx40 && !DcNaxx40SlimeCrossing::IsDryCampGround(
+            *bot, {bot->GetPositionX(), bot->GetPositionY(), bot->GetPositionZ()}))
+        return false; // Give the slime escape action the movement slot.
 
     // Healers hold at camp like everyone else but are pinned with the "stay"
     // strategy instead of "+passive" (ApplyFollowerPassive) so they can heal the
@@ -1133,6 +1222,38 @@ bool DungeonClearCampHoldActionBase::Execute(Event /*event*/)
                       "into it", bot->GetName(), toCamp);
         ownPull.campHoldBest = 0.0f;
         return false;
+    }
+
+    if (naxx40)
+    {
+        if (!IsMovingAllowed() || bot->IsFalling())
+            return false;
+
+        auto const movingTo = [&](Position const& position)
+        {
+            G3D::Vector3 const point(position.GetPositionX(), position.GetPositionY(), position.GetPositionZ());
+            return DcMovement::OwnsRunningEscort(bot) &&
+                   (bot->movespline->FinalDestination() - point).squaredLength() <= 1.0f;
+        };
+        if (movingTo(slot))
+            return true;
+
+        G3D::Vector3 const target(slot.GetPositionX(), slot.GetPositionY(), slot.GetPositionZ());
+        if (DcNaxx40SlimeCrossing::TryCrossTowards(botAI, target))
+            return true;
+
+        Movement::PointsArray path = DcNaxx40SlimeCrossing::BuildDryCampPath(bot, slot);
+        if (path.empty() && camp.GetExactDist(&slot) > DC_PULL_SLOT_RADIUS)
+        {
+            if (movingTo(camp))
+                return true;
+            if (bot->GetExactDist(&camp) <= DC_PULL_SLOT_RADIUS)
+                return passive;
+            path = DcNaxx40SlimeCrossing::BuildDryCampPath(bot, camp);
+        }
+        if (path.empty())
+            return passive;
+        return DcMovement::SplinePath(botAI, path, prio);
     }
 
     // A NEW CAMP IS A NEW RECALL. The advanced pull moves the camp as the tank
@@ -1508,6 +1629,9 @@ bool DungeonClearAssistCampActionBase::Execute(Event /*event*/)
         }
         return false;
     }
+
+    if (DcNaxx40Embalming::IsSlime(target) && DcNaxx40Embalming::GetCamp(bot))
+        return false; // Wait for an open shot instead of closing to the slime's feet.
 
     // NO LINE OF SIGHT: close on the MOB (never the tank) to round the corner and
     // regain sight — the one case stock combat can't handle (its reach is distance-

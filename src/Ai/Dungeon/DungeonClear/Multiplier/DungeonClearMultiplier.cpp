@@ -24,10 +24,15 @@
 #include "Ai/Dungeon/DungeonClear/Util/DcEscapeLeap.h"
 #include "Ai/Dungeon/DungeonClear/Util/DcFlightLeg.h"
 #include "Ai/Dungeon/DungeonClear/Util/DcLyceumCloseUpDecision.h"
+#include "Ai/Dungeon/DungeonClear/Util/DcNaxx40Embalming.h"
+#include "Ai/Dungeon/DungeonClear/Util/DcNaxx40LivingPoison.h"
+#include "Ai/Dungeon/DungeonClear/Util/DcNaxx40Patchwerk.h"
+#include "Ai/Dungeon/DungeonClear/Util/DcNaxx40SlimeCrossing.h"
 #include "Ai/Dungeon/DungeonClear/Util/DcOculusPlan.h"
 #include "Ai/Dungeon/DungeonClear/Util/DcPartyWideChain.h"
 #include "Ai/Dungeon/DungeonClear/Util/DcSmartRest.h"
 #include "Ai/Dungeon/DungeonClear/Util/DungeonClearUtil.h"
+#include "Ai/Raid/Naxx40/Naxx40Slime.h"
 #include "Ai/Dungeon/DungeonClear/DcValueKeys.h"
 
 // BLACKWING LAIR, the orb runner, and the hardest guard in the module: while this
@@ -69,6 +74,43 @@ static bool IsDamagingAction(PlayerbotAI* botAI, Action* action, std::string con
     uint32 const spellId = botAI->GetAiObjectContext()->GetValue<uint32>("spell id", cast->getSpell())->Get();
     SpellInfo const* info = spellId ? sSpellMgr->GetSpellInfo(spellId) : nullptr;
     return info && !info->IsPositive();
+}
+
+static bool LeavesEmbalmingCamp(PlayerbotAI* botAI, Player* bot, Action* action, std::string const& name)
+{
+    if (bot->GetMapId() != 533 || name == "dungeon clear hold at camp" || name == "dungeon clear stay at camp" ||
+        name == "naxx40 leave slime" || name == "avoid aoe" ||
+        name == "dungeon clear pull" || name == "dungeon clear pull maneuver")
+        return false;
+
+    bool const ranged = DcNaxx40Embalming::CanAttackFromCamp(bot);
+    // Ranged assist can acquire a target. It waits in place if it cannot see the slime.
+    if (ranged && (name == "dungeon clear assist camp" || name == "dungeon clear assist camp combat" ||
+                   (dynamic_cast<AttackAction*>(action) && name != "melee")))
+        return false;
+
+    return (dynamic_cast<MovementAction*>(action) || dynamic_cast<CastReachTargetSpellAction*>(action) ||
+            (!ranged && (IsDamagingAction(botAI, action, name) || name == "pet attack")) ||
+            name == "open loot" || name == "loot") && DcNaxx40Embalming::GetCamp(bot).has_value();
+}
+
+static bool LeavesPatchwerkPosition(PlayerbotAI* botAI, Player* bot, Action* action, std::string const& name)
+{
+    if (bot->GetMapId() != 533 || name == "dungeon clear hold at camp" || name == "dungeon clear stay at camp" ||
+        name == "naxx40 leave slime" || name == "avoid aoe")
+        return false;
+
+    return (dynamic_cast<MovementAction*>(action) || dynamic_cast<CastReachTargetSpellAction*>(action) ||
+            IsDamagingAction(botAI, action, name) || name == "pet attack" || name == "open loot" || name == "loot" ||
+            name == "dungeon clear recover stranded") && DcNaxx40Patchwerk::HasPatrolPosition(bot);
+}
+
+static bool InterruptsSlimeEscape(PlayerbotAI& ai, Action* action, std::string const& name)
+{
+    return name != "naxx40 leave slime" &&
+           (dynamic_cast<MovementAction*>(action) || dynamic_cast<CastReachTargetSpellAction*>(action) ||
+            name == "food" || name == "drink" || name == "open loot" || name == "loot") &&
+           IsNaxx40SlimeEscapeActive(ai);
 }
 
 // A mob already beating on a non-tank party member is peeled at once: the
@@ -310,6 +352,21 @@ float DungeonClearMultiplier::GetValue(Action* action)
 
     std::string const& name = action->getName();
 
+    if (LeavesEmbalmingCamp(botAI, bot, action, name) || LeavesPatchwerkPosition(botAI, bot, action, name) ||
+        (bot->GetMapId() == 533 && InterruptsSlimeEscape(*botAI, action, name)))
+        return 0.0f;
+
+    if (bot->GetMapId() == 533 && !bot->IsInCombat() && name != "naxx40 leave slime" &&
+        (dynamic_cast<MovementAction*>(action) || name == "food" || name == "drink" ||
+         name == "open loot" || name == "loot" || name == "dungeon clear advance" ||
+         name == "dungeon clear recover stranded") &&
+        (DcNaxx40LivingPoison::OwnsMovement(botAI) || DcNaxx40SlimeCrossing::CrossingActive(bot)))
+        return 0.0f;
+
+    // An old Moon mark must not hand over control before Dungeon Clear parks at the entrance.
+    if (name == "aq40 cthun prepull" && AI_VALUE(Player*, DcKey::PartyTank))
+        return 0.0f;
+
     if (float const clamp = RazorgorePossessionClamp(bot, name); clamp != 1.0f)
         return clamp;
 
@@ -522,6 +579,14 @@ float DungeonClearCombatMultiplier::GetValue(Action* action)
 
     std::string const& name = action->getName();
 
+    if (LeavesEmbalmingCamp(botAI, bot, action, name) || LeavesPatchwerkPosition(botAI, bot, action, name) ||
+        (bot->GetMapId() == 533 && InterruptsSlimeEscape(*botAI, action, name)))
+        return 0.0f;
+
+    if (bot->GetMapId() == 533 && name != "naxx40 leave slime" && dynamic_cast<MovementAction*>(action) &&
+        DcNaxx40LivingPoison::IsCrossingLane(bot))
+        return 0.0f;
+
     // Threat lead, combat engine. The non-combat multiplier can only hold the
     // OPENER; once a follower is fighting, every damage action (rotation, Frost
     // Nova, Blast Wave, Flamestrike...) runs here. Without this the hold never
@@ -594,6 +659,10 @@ float DungeonClearCombatMultiplier::GetValue(Action* action)
         return 1.0f;
     if (DcBossStandDown::IsActive(bot))
     {
+        if ((name == "dungeon clear pull maneuver" && DcNaxx40Patchwerk::IsPatrolManeuverActive(bot)) ||
+            (name == "dungeon clear stay at camp" &&
+             (DcNaxx40Patchwerk::HasPatrolPosition(bot) || DcNaxx40Patchwerk::IsPatrolManeuverActive(bot))))
+            return 1.0f;
         switch (DcBossStandDown::ClassifyAction(name, isDcAction))
         {
             case DcBossStandDown::ActionVerdict::Stock:

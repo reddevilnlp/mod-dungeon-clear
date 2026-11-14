@@ -97,6 +97,7 @@ enum class DcThrottle : uint8
     BrdTorchWarn,        // "no Flame Keeper respawned" WARN (once per torch wait)
     EventLeashLog,       // an event's pack-leash hold line (DungeonEvent::packLeash)
     UbrsEventLog,        // the Upper Blackrock Spire hooks' waiting lines
+    Naxx40SlimeCrossingLog, // the Patchwerk approach's raised-bank crossing check
 
     // --- action floors (time only) -----------------------------------------
     UpHarpoonFire,       // floor between two Harpoon Launcher clicks (its own

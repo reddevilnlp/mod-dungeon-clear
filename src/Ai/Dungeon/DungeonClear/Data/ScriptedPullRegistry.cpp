@@ -9,6 +9,7 @@
 #include <cmath>
 #include <optional>
 
+#include "Creature.h"
 #include "Player.h"
 #include "Position.h"
 #include "Unit.h"
@@ -16,7 +17,10 @@
 #include "Ai/Dungeon/DungeonClear/DcPullContext.h"
 #include "Ai/Dungeon/DungeonClear/DcValueKeys.h"
 #include "Ai/Dungeon/DungeonClear/Data/DungeonBossInfo.h"
+#include "Ai/Dungeon/DungeonClear/Util/DcNaxx40Patchwerk.h"
+#include "Ai/Dungeon/DungeonClear/Util/DcNaxx40LivingPoison.h"
 #include "Ai/Dungeon/DungeonClear/Util/DcTargeting.h"
+#include "Ai/Raid/Naxx40/Naxx40Encounter.h"
 #include "Playerbots.h"
 
 namespace
@@ -498,6 +502,85 @@ namespace
         {
             std::vector<ScriptedPullStage> t;
 
+            // Construct Quarter. Existing Advanced Pull owns the camp and tag.
+            ScriptedPullStage gallery;
+            gallery.mapId = 533;
+            gallery.bossEntry = Naxx40PatchwerkEntry;
+            gallery.name = "Naxx40 - Patchwerk gallery Golems";
+            gallery.campX = 3031.1f; gallery.campY = -3409.1f; gallery.campZ = 298.2f;
+            gallery.standX = 3052.9f; gallery.standY = -3385.2f; gallery.standZ = 298.3f;
+            gallery.packX = 3074.0f; gallery.packY = -3369.5f; gallery.packZ = 298.5f;
+            gallery.packRadius = 22.0f;
+            gallery.packZBand = 2.0f;
+            gallery.armRadius = 18.0f;
+            gallery.entries = {351021};
+            gallery.spawnIds = {361144, 361145, 361146, 361147};
+            t.push_back(gallery);
+
+            ScriptedPullStage lowerEast;
+            lowerEast.mapId = 533;
+            lowerEast.bossEntry = Naxx40PatchwerkEntry;
+            lowerEast.order = 1;
+            lowerEast.name = "Naxx40 - Patchwerk lower east Golems";
+            lowerEast.campX = 3140.0f; lowerEast.campY = -3302.0f; lowerEast.campZ = 293.628f;
+            lowerEast.standX = 3131.4f; lowerEast.standY = -3324.8f; lowerEast.standZ = 293.5634f;
+            lowerEast.packX = 3152.0f; lowerEast.packY = -3348.0f; lowerEast.packZ = 294.6f;
+            lowerEast.packRadius = 17.0f;
+            lowerEast.packZBand = 2.0f;
+            lowerEast.armX = 3104.0f; lowerEast.armY = -3305.0f; lowerEast.armZ = 293.7f;
+            lowerEast.armRadius = 10.0f;
+            lowerEast.entries = {351021, 351022};
+            lowerEast.spawnIds = {361155};
+            t.push_back(lowerEast);
+
+            ScriptedPullStage lowerEastSurvivors = lowerEast;
+            lowerEastSurvivors.order = 2;
+            lowerEastSurvivors.name = "Naxx40 - Patchwerk lower east survivors";
+            lowerEastSurvivors.standX = 3134.5f;
+            lowerEastSurvivors.standY = -3335.5f;
+            lowerEastSurvivors.standZ = 293.628f;
+            lowerEastSurvivors.spawnIds = {361150, 361151};
+            t.push_back(lowerEastSurvivors);
+
+            ScriptedPullStage doorway;
+            doorway.mapId = 533;
+            doorway.bossEntry = Naxx40PatchwerkEntry;
+            doorway.order = 3;
+            doorway.name = "Naxx40 - Patchwerk doorway Golems";
+            doorway.campX = 3123.8f; doorway.campY = -3288.1f; doorway.campZ = 293.6f;
+            doorway.standX = 3148.0f; doorway.standY = -3290.0f; doorway.standZ = 293.628f;
+            doorway.packX = 3163.0f; doorway.packY = -3274.0f; doorway.packZ = 294.9f;
+            doorway.packRadius = 18.0f;
+            doorway.packZBand = 2.0f;
+            doorway.armX = 3118.0f; doorway.armY = -3291.0f; doorway.armZ = 293.6f;
+            doorway.armRadius = 12.0f;
+            doorway.entries = {351021};
+            doorway.spawnIds = {361158, 361159, 361160, 361161};
+            t.push_back(doorway);
+
+            ScriptedPullStage spewers;
+            spewers.mapId = 533;
+            spewers.bossEntry = DcNaxx40LivingPoison::GrobbulusEntry;
+            spewers.order = DcNaxx40LivingPoison::GrobbulusEastPullOrder;
+            spewers.name = "Naxx40 - Grobbulus east Spewers";
+            spewers.campX = 3288.0f;
+            spewers.campY = -3266.0f;
+            spewers.campZ = 292.595f;
+            spewers.standX = 3312.0f;
+            spewers.standY = -3278.0f;
+            spewers.standZ = 292.595f;
+            spewers.packX = 3330.9f;
+            spewers.packY = -3311.0f;
+            spewers.packZ = 292.77f;
+            spewers.packRadius = 16.0f;
+            spewers.packZBand = 2.0f;
+            spewers.armRadius = 12.0f;
+            spewers.entries = {351027};
+            spewers.spawnIds = {361185, 361186};
+            // A surviving second Spewer may be beyond a 30-yard opener.
+            spewers.bodyPull = true;
+            t.push_back(spewers);
+
             ScriptedPullStage east;
             east.mapId      = MGT_MAP;
             east.bossEntry  = MGT_SELIN;
@@ -783,7 +866,7 @@ Unit* ScriptedPullRegistry::NearestPackMember(Player* bot, AiObjectContext* ctx,
     return DcTargeting::NearestHostileNearPoint(bot, ctx, s.packX, s.packY, s.packZ,
                                                 s.packRadius, s.packZBand, &s.entries,
                                                 &stand, pull.abortTarget,
-                                                s.HasAvoidAnchor() ? &avoid : nullptr);
+                                                s.HasAvoidAnchor() ? &avoid : nullptr, &s.spawnIds);
 }
 
 ScriptedPullStage const* ScriptedPullRegistry::DueStage(Player* bot, AiObjectContext* ctx)
@@ -825,6 +908,14 @@ ScriptedPullStage const* ScriptedPullRegistry::DueStage(Player* bot, AiObjectCon
     {
         if (s->bossEntry != next->entry)
             continue;
+        if (s->bossEntry == DcNaxx40LivingPoison::GrobbulusEntry &&
+            !DcNaxx40LivingPoison::GrobbulusEastPullReady(bot))
+            continue;
+        if (s->bossEntry == Naxx40PatchwerkEntry &&
+            (!DcNaxx40Patchwerk::UsesPatrolCamp(bot, ctx, next->entry) ||
+             DcNaxx40Patchwerk::SweepInProgress(bot, ctx, next->entry) ||
+             std::abs(bot->GetPositionZ() - s->campZ) > s->packZBand))
+            continue;
         if (!InArmRange(*s, bot->GetPositionX(), bot->GetPositionY(), bot->GetPositionZ()))
             continue;
         orders.push_back(s->order);
@@ -839,6 +930,12 @@ bool ScriptedPullRegistry::IsStageTarget(ScriptedPullStage const& s, Unit const*
 {
     if (!u)
         return false;
+    if (!s.spawnIds.empty())
+    {
+        Creature const* const creature = u->ToCreature();
+        if (!creature || std::find(s.spawnIds.begin(), s.spawnIds.end(), creature->GetSpawnId()) == s.spawnIds.end())
+            return false;
+    }
     return IsPackEntry(s, u->GetEntry()) &&
            InPack(s, u->GetPositionX(), u->GetPositionY(), u->GetPositionZ());
 }

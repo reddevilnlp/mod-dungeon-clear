@@ -26,6 +26,7 @@
 #include "Ai/Dungeon/DungeonClear/Data/RoomAggroRegistry.h"
 #include "Ai/Dungeon/DungeonClear/Data/DungeonWingRegistry.h"
 #include "Ai/Dungeon/DungeonClear/Util/ChunkedPathfinder.h"
+#include "Ai/Dungeon/DungeonClear/Util/DcNaxx40LivingPoison.h"
 #include "Ai/Dungeon/DungeonClear/Util/DcPlayerbotCompat.h"
 #include "Ai/Dungeon/DungeonClear/Util/DcRezRecovery.h"
 #include "Ai/Dungeon/DungeonClear/Util/DcRunWing.h"
@@ -451,7 +452,16 @@ bool DcOffAction::Execute(Event event)
     // which all route through DisableDungeonClear. This closes the drift where
     // those paths never revoked the leader's daze immunity. The same "CHAT\t<reason>"
     // addon line and `dc status` refresh are emitted inside it.
+    DcRunState& run = DcRun::Of(context);
+    bool const crossingPoison = DcNaxx40LivingPoison::IsCrossingLane(bot);
+    uint32 const crossingSpline = run.naxx40PoisonSpline;
+    uint32 const crossingInstance = run.naxx40PoisonInstance;
     DcActionShared::DisableDungeonClear(botAI, "Dungeon clear disabled.");
+    if (crossingPoison)
+    {
+        run.naxx40PoisonSpline = crossingSpline;
+        run.naxx40PoisonInstance = crossingInstance;
+    }
 
     // dc-off-only extras the shared teardown doesn't cover: clear the fallback
     // target, then hard-stop any in-flight advance/engage spline so the bot visibly
@@ -461,7 +471,8 @@ bool DcOffAction::Execute(Event event)
     // "dungeon clear" strategy stays installed but inert — it stays resident on
     // every bot via the login script regardless.
     context->GetValue<ObjectGuid>(DcKey::FallbackTarget)->Set(ObjectGuid::Empty);
-    HaltAllMovement(bot);
+    if (!crossingPoison)
+        HaltAllMovement(bot);
     return true;
 }
 
@@ -1244,7 +1255,8 @@ bool DcGoAction::Execute(Event event)
 
     // Kill any parked escort glide before building the route to the new target
     // (see HaltAllMovement) so the tank doesn't coast down the old path first.
-    HaltAllMovement(bot);
+    if (!DcNaxx40LivingPoison::IsCrossingLane(bot))
+        HaltAllMovement(bot);
 
     DcStatusPublisher::SendAddonMessage(botAI, "CHAT\tTargeting boss: " + matched->name + ". Navigating...");
 
@@ -1308,7 +1320,7 @@ bool DcPauseAction::Execute(Event event)
         // Stop the in-flight advance glide so it doesn't coast to its endpoint.
         // Only out of combat: mid-fight the combat engine owns movement and we
         // want the current fight to finish before holding.
-        if (bot && !bot->IsInCombat())
+        if (bot && !bot->IsInCombat() && !DcNaxx40LivingPoison::IsCrossingLane(bot))
             HaltAllMovement(bot);
 
         DcStatusPublisher::SendAddonMessage(botAI, "CHAT\tDungeon clear paused.");

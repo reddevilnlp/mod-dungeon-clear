@@ -24,6 +24,7 @@ class Player;
 class Unit;
 class AiObjectContext;
 class DcApproachState;
+class Event;
 struct DungeonBossInfo;
 
 namespace DcActionShared
@@ -170,6 +171,10 @@ namespace DcActionShared
 
     // Clear the stall + last-said reason.
     void ClearStall(AiObjectContext* ctx);
+
+    // Park at the C'Thun entrance until a raid leader marks the tank with Moon.
+    bool PauseForCthun(PlayerbotAI* botAI, DungeonBossInfo const& next, Event const& event,
+                      Unit const* trash = nullptr);
 
     // Record the navigation micro-activity token for the addon status poll.
     void SetPhase(AiObjectContext* ctx, std::string const& phase);

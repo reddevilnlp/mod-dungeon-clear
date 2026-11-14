@@ -98,6 +98,7 @@ struct DcPullContext
                                                  // whole point is reaching the anchor,
                                                  // so planting early would drop the
                                                  // fight back in the water.
+    bool        naxx40RangedStand = false;       // Ranged-only tag from a verified stand in the Patchwerk route
     int32       scriptedStage = -1;              // ORDER of the ScriptedPullRegistry
                                                  // stage this pull is executing, or
                                                  // -1 for an ordinary pull. Set at
@@ -530,6 +531,8 @@ struct DcPullContext
         // the graceful release delay (a safety release is always immediate).
         if (phase == DcPullPhase::Idle || phase == DcPullPhase::Engage)
             partyReleased = false;
+        if (p == DcPullPhase::Idle)
+            naxx40RangedStand = false;
         DcLabTap::Phase(this, static_cast<uint32>(phase), static_cast<uint32>(p), nowMs);
         phase = p;
         phaseSince = nowMs;

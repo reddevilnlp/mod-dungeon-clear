@@ -7,11 +7,14 @@
 
 #include "Creature.h"
 #include "Playerbots.h"
+#include "Ai/Dungeon/DungeonClear/Data/DungeonBossInfo.h"
 #include "Ai/Dungeon/DungeonClear/Data/FightInPlaceRegistry.h"
 #include "Ai/Dungeon/DungeonClear/Data/ScriptedPullRegistry.h"
 #include "Ai/Dungeon/DungeonClear/DcPullContext.h"
 #include "Ai/Dungeon/DungeonClear/Util/DcBossStandDown.h"
 #include "Ai/Dungeon/DungeonClear/Util/DcLeaderSignal.h"
+#include "Ai/Dungeon/DungeonClear/Util/DcNaxx40Patchwerk.h"
+#include "Ai/Dungeon/DungeonClear/Util/DcNaxx40LivingPoison.h"
 #include "Ai/Dungeon/DungeonClear/Util/DcNoStopZone.h"
 #include "Ai/Dungeon/DungeonClear/Util/DcTargeting.h"
 #include "Ai/Dungeon/DungeonClear/Util/DcTickMemo.h"
@@ -22,6 +25,11 @@
 bool DungeonClearPullModeCurrentValue::Calculate()
 {
     DcPullContext& pull = context->GetValue<DcPullContext&>(DcKey::PullContext)->Get();
+    if (DcNaxx40LivingPoison::OwnsGrobbulusApproach(botAI) && pull.phase == DcPullPhase::Idle)
+    {
+        pull.ClearDynamicVerdict();
+        return false;
+    }
 
     // While a PERSISTENT anchored event drives (ZulFarrak's temple), the event
     // owns the tank: force the EFFECTIVE pull mode Off so the whole dynamic/
@@ -167,7 +175,13 @@ bool DungeonClearPullModeCurrentValue::Calculate()
     // Leader-only, like the Dynamic governor: a follower's own copy of the bool
     // drives nothing, and writing it there would just add churn.
     bool const isLeader = DcLeaderSignal::IsDungeonClearLeader(bot);
-    if (isLeader && DcTickMemoAccess::ScriptedStage(bot, context) != nullptr)
+    auto const next = bot->GetMapId() == 533
+        ? AI_VALUE(std::optional<DungeonBossInfo>, DcKey::NextDungeonBoss) : std::nullopt;
+    if (isLeader && (pull.naxx40RangedStand ||
+        (next && DcNaxx40Patchwerk::AtEmbalmingHandoff(bot, context, next->entry)) ||
+        (next && DcNaxx40Patchwerk::SweepPullCamp(bot, context, next->entry) &&
+         DcTargeting::GetPullTarget(botAI)) ||
+        DcTickMemoAccess::ScriptedStage(bot, context)))
     {
         if (!pull.scriptedForced)
         {

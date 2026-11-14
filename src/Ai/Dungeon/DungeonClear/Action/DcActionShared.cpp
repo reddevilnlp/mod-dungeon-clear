@@ -25,6 +25,7 @@
 #include "DisableMgr.h"
 #include "GameObject.h"
 #include "Group.h"
+#include "InstanceScript.h"
 #include "Log.h"
 #include "Map.h"
 #include "ModelIgnoreFlags.h"
@@ -80,6 +81,69 @@
 
 namespace DcActionShared
 {
+    bool PauseForCthun(PlayerbotAI* botAI, DungeonBossInfo const& next, Event const& event, Unit const* trash)
+    {
+        constexpr uint32 aq40Map = 531;
+        constexpr uint32 eyeEntry = 15589;
+        constexpr uint32 cthunEntry = 15727;
+        constexpr uint32 twinsEncounter = 7;
+        constexpr uint32 cthunEncounter = 9;
+        constexpr uint8 moonIcon = 4;
+        // The Eye adds its own combat reach to its 90-yard aggro check.
+        constexpr float eyeAggroDistance = 90.0f;
+        constexpr float stagingMargin = 10.0f;
+        constexpr float entranceFloor = 90.0f;
+
+        Player* bot = botAI->GetBot();
+        if (next.entry != cthunEntry || bot->GetMapId() != aq40Map || bot->IsInCombat() ||
+            bot->GetPositionZ() < entranceFloor || !botAI->HasStrategy("aq40 cthun", BOT_STATE_NON_COMBAT))
+            return false;
+
+        InstanceScript* instance = bot->GetInstanceScript();
+        Group* group = bot->GetGroup();
+        if (!group || !instance || instance->GetBossState(twinsEncounter) != DONE)
+            return false;
+        EncounterState const state = instance->GetBossState(cthunEncounter);
+        if (state == IN_PROGRESS || state == DONE)
+            return false;
+
+        Creature* eye = DcTargeting::FindLiveCreatureOnMap(bot, eyeEntry);
+        if (!eye || eye->IsInCombat() || bot->GetPositionX() >= eye->GetPositionX() ||
+            !eye->IsWithinDist2d(bot, eyeAggroDistance + stagingMargin))
+            return false;
+
+        // EngageDirect can tag this trash from here without a walk-in toward the Eye.
+        if (trash && bot->IsWithinMeleeRange(trash) && trash->GetPositionX() <= bot->GetPositionX())
+            return false;
+
+        AiObjectContext* context = botAI->GetAiObjectContext();
+        DcRunState& run = DcRun::Of(context);
+        if (run.paused)
+            return true;
+
+        // Moon from an earlier attempt must not trigger the pull as DC yields movement.
+        ObjectGuid const marked = group->GetTargetIcon(moonIcon);
+        if (Player* player = ObjectAccessor::GetPlayer(*bot, marked))
+            if (player->GetGroup() == group && GET_PLAYERBOT_AI(player) && PlayerbotAI::IsTank(player))
+                group->SetTargetIcon(moonIcon, bot->GetGUID(), ObjectGuid::Empty);
+
+        run.paused = true;
+        run.pauseReason = "C'Thun entrance: mark the tank with Moon when ready";
+        run.pausedDoor = ObjectGuid::Empty;
+        context->GetValue<DcPullContext&>(DcKey::PullContext)->Get().Reset();
+        ClearStall(context);
+        if (MotionMaster* motion = bot->GetMotionMaster())
+            motion->Clear();
+        bot->StopMovingOnCurrentPos();
+
+        LOG_INFO("playerbots.dungeonclear", "[DC:{}] C'Thun handoff at {:.1f}yd: waiting for Moon on the tank",
+                 bot->GetName(), bot->GetExactDist2d(eye));
+        DcStatusPublisher::SendAddonMessage(botAI, "CHAT\tC'Thun: clear any remaining tunnel trash, keep the raid on "
+                                                  "follow and mark the tank with Moon when ready. Leave DC paused.");
+        botAI->DoSpecificAction("dc status", event, true);
+        return true;
+    }
+
 
     struct PullSpellPick
     {

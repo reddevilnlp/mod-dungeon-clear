@@ -48,6 +48,10 @@
 #include "Ai/Dungeon/DungeonClear/Util/ChunkedPathfinder.h"
 #include "Ai/Dungeon/DungeonClear/Util/DcDoorPolicy.h"
 #include "Ai/Dungeon/DungeonClear/Util/DcMovement.h"
+#include "Ai/Dungeon/DungeonClear/Util/DcNaxx40Embalming.h"
+#include "Ai/Dungeon/DungeonClear/Util/DcNaxx40Patchwerk.h"
+#include "Ai/Dungeon/DungeonClear/Util/DcNaxx40LivingPoison.h"
+#include "Ai/Dungeon/DungeonClear/Util/DcRun.h"
 #include "Ai/Dungeon/DungeonClear/Util/NavmeshSnap.h"
 #include "Ai/Dungeon/DungeonClear/Util/DcPathWorker.h"
 #include "Ai/Dungeon/DungeonClear/Util/DcTankForm.h"
@@ -657,6 +661,8 @@ namespace
 bool DungeonClearPullAction::Execute(Event /*event*/)
 {
     DcPullContext& pull = context->GetValue<DcPullContext&>(DcKey::PullContext)->Get();
+    if (pull.phase == DcPullPhase::Idle && DcNaxx40LivingPoison::OwnsGrobbulusApproach(botAI))
+        return false;
     Position& camp = pull.camp;
     uint32 const since = pull.phaseSince;
     uint32 const now = getMSTime();
@@ -708,6 +714,8 @@ bool DungeonClearPullAction::Execute(Event /*event*/)
                               bot->GetName());
                 return false;
             }
+            if (DcNaxx40Patchwerk::DeferEmbalmingUntilLowerEast(bot, context, next->entry, trash))
+                return false;
 
             // A pack is in hand — arm the druid tank's bear form now, so it is
             // already up by the time this tick's commit lands (see the top of
@@ -816,7 +824,23 @@ bool DungeonClearPullAction::Execute(Event /*event*/)
             // 3, so this just keeps the tank planted (no tag, no camp handshake)
             // until the governor flips the verdict (patrol passed -> LEEROY/ADVANCED)
             // or the wait times out. Followers trail normally (pull mode is off).
-            if (pull.decision == DcPullDecisionCode::PatrolHold)
+            bool const embalmingRanged = next &&
+                DcNaxx40Patchwerk::AtEmbalmingHandoff(bot, context, next->entry);
+            auto const sweepCamp = next ?
+                DcNaxx40Patchwerk::SweepPullCamp(bot, context, next->entry) : std::nullopt;
+            bool const naxx40RangedStand = embalmingRanged || sweepCamp.has_value();
+            if (embalmingRanged && !DcNaxx40Embalming::IsSlime(trash))
+                return false;
+            if (sweepCamp)
+            {
+                auto const& targets = context->GetValue<std::vector<ObjectGuid>>(DcKey::RoomTrashRemaining)->Get();
+                if (std::find(targets.begin(), targets.end(), trash->GetGUID()) == targets.end())
+                {
+                    context->GetValue<ObjectGuid>(DcKey::PullTarget)->Reset();
+                    return false;
+                }
+            }
+            if (!naxx40RangedStand && pull.decision == DcPullDecisionCode::PatrolHold)
             {
                 // Hold, not Soft: this branch is only reached at commit range,
                 // i.e. the tank arrives here mid escort-spline glide driven by
@@ -862,7 +886,7 @@ bool DungeonClearPullAction::Execute(Event /*event*/)
             // from the boss as the room allows; the party goes straight to the camp,
             // the tank to the stand spot, and only commits there.
             DcRoomLane const laneState =
-                DcTargeting::IsRoomClearActive(bot, context)
+                !naxx40RangedStand && DcTargeting::IsRoomClearActive(bot, context)
                     ? DcResolveRoomClearLane(botAI, bot, context, trash, commitRange)
                     : DcRoomLane::None;
             // Refused this tick: stand still and let the next tick's pull target (the
@@ -891,7 +915,7 @@ bool DungeonClearPullAction::Execute(Event /*event*/)
                     return true;
                 }
             }
-            if (toTrash > commitRange && !roomLane)
+            if (toTrash > commitRange && !roomLane && !naxx40RangedStand)
             {
                 // Room-wide-aggro pre-clear (RoomAggroRegistry): the pull is aimed
                 // at a ROOM mob near a flagged boss, not a corridor pack. Yielding
@@ -1062,6 +1086,29 @@ bool DungeonClearPullAction::Execute(Event /*event*/)
                 drag = bot->GetExactDist(&pull.laneCamp);
                 clearance = std::numeric_limits<float>::max();
             }
+            else if (sweepCamp)
+            {
+                if (!DcNaxx40Patchwerk::ValidateSweepCamp(bot, context, *sweepCamp))
+                {
+                    StallDungeonClear(botAI, "Patchwerk: waiting for a dry return path to the pull camp.");
+                    return true;
+                }
+                ClearStall(context);
+                camped = sweepCamp;
+                drag = bot->GetExactDist(&*camped);
+                clearance = trash->GetExactDist(&*camped);
+            }
+            else if (std::optional<Position> const slimeCamp = DcNaxx40Embalming::PullCamp(bot, trash))
+            {
+                // Use the fixed camp at Forming, after the raid has followed the approach.
+                if (next)
+                    DcNaxx40Patchwerk::NoteClearedLowerEast(bot, context, next->entry);
+                camped = slimeCamp;
+                drag = bot->GetExactDist(&*camped);
+                clearance = trash->GetExactDist(&*camped);
+            }
+            else if (embalmingRanged)
+                return false;
             else
                 camped = DcPullPlanner::ComputeSafeCamp(botAI, trash, setback, safeRadius,
                                                         maxDrag, clearance, drag);
@@ -1099,6 +1146,10 @@ bool DungeonClearPullAction::Execute(Event /*event*/)
             // Square up on the pack for the dwell at the commit spot.
             DcFaceIfNeeded(bot, trash);
             DcSetPullPhase(context, DcPullPhase::Forming);
+            pull.naxx40RangedStand = naxx40RangedStand;
+            if (sweepCamp)
+                DC_PULL_INFO("[DC:{}] Patchwerk: checkpoint {} ranged pull from the dry stand",
+                    bot->GetName(), DcRun::Of(context).patchwerkSweep.checkpoint);
             // clearance == -1 means no other pack is anywhere near the camp.
             float const clrDisp =
                 clearance >= std::numeric_limits<float>::max() ? -1.0f : clearance;
@@ -1141,8 +1192,9 @@ bool DungeonClearPullAction::Execute(Event /*event*/)
                     ? ScriptedPullTravelBudgetMs(bot->GetExactDist(&camp))
                     : DC_PULL_PARTY_SET_TIMEOUT_MS;
 
-            bool const partySet =
-                DcPullPlanner::IsPartySetAtCamp(bot, camp, DC_PULL_SET_RADIUS);
+            bool const partySet = DcNaxx40Patchwerk::IsPatrolPull(pull)
+                ? DcNaxx40Patchwerk::PatrolFormationReady(bot)
+                : DcPullPlanner::IsPartySetAtCamp(bot, camp, DC_PULL_SET_RADIUS);
             bool const formingTimedOut = (now - since) > setTimeoutMs;
             if (!partySet && !formingTimedOut)
             {
@@ -1172,6 +1224,9 @@ bool DungeonClearPullAction::Execute(Event /*event*/)
 
         case DcPullPhase::Advancing:
         {
+            if (DcNaxx40Patchwerk::IsPatrolPull(pull))
+                return DcNaxx40Patchwerk::DrivePatrolTag(botAI, context);
+
             // Tag the pack. The moment combat starts the non-combat trigger stops
             // firing and DungeonClearPullManeuverAction drags it back to camp.
             Unit* trash = next.has_value() ? DcTargeting::GetPullTarget(botAI) : nullptr;
@@ -1549,6 +1604,12 @@ bool DungeonClearPullAction::Execute(Event /*event*/)
                     // Not in range/LOS yet — fall through to close the gap; we'll
                     // re-enter and cast once within range and line of sight.
                 }
+            }
+
+            if (pull.naxx40RangedStand)
+            {
+                DcMovement::StopBot(bot, DcMovement::Stop::Hold);
+                return true;
             }
 
             // No ranged option (or out of range/LOS / cast failed): body-tag by
@@ -2740,7 +2801,8 @@ bool DungeonClearPullManeuverAction::Execute(Event /*event*/)
                 if (!bot->HasInArc(CAST_ANGLE_IN_FRONT, aggressor))
                     ServerFacade::instance().SetFacingTo(bot, aggressor);
                 context->GetValue<Unit*>(DcKey::Stock::CurrentTarget)->Set(aggressor);
-                bot->Attack(aggressor, botAI->IsMelee(bot));
+                if (!DcNaxx40Embalming::IsSlime(aggressor))
+                    bot->Attack(aggressor, botAI->IsMelee(bot));
             }
             botAI->ChangeEngine(BOT_STATE_COMBAT);
 
@@ -2760,9 +2822,12 @@ bool DungeonClearPullManeuverAction::Execute(Event /*event*/)
     // dumping the tank into "fight in place", which is why the pull-back to camp
     // worked or failed at random (a millisecond-boundary race). Clamp the elapsed.
     uint32 const legElapsed = now > since ? now - since : 0u;
-    float const dist = bot->GetExactDist(&camp);
+    bool const embalming = DcNaxx40Embalming::IsSlime(ObjectAccessor::GetUnit(*bot, pull.pullTarget));
+    bool const patchwerk = DcNaxx40Patchwerk::IsPatrolPull(pull);
+    Position const returnPoint = embalming ? DcNaxx40Embalming::RetreatPoint(camp) : camp;
+    float const dist = bot->GetExactDist(&returnPoint);
 
-    if (dist <= DC_PULL_CAMP_ARRIVE)
+    if (dist <= (patchwerk ? 0.75f : DC_PULL_CAMP_ARRIVE))
     {
         // Back at camp. For an ordinary trash pull the pack is glued to the tank by
         // now (it chased it the whole way), so arriving IS the end of the maneuver:
@@ -2785,8 +2850,8 @@ bool DungeonClearPullManeuverAction::Execute(Event /*event*/)
         {
             Unit* const pulled = pull.pullTarget.IsEmpty()
                 ? nullptr : ObjectAccessor::GetUnit(*bot, pull.pullTarget);
-            if (pulled && pulled->IsAlive() &&
-                pulled->GetExactDist(&camp) > DC_PULLBACK_RELEASE_RANGE)
+            if (pulled && pulled->IsAlive() && (patchwerk ? !DcNaxx40Patchwerk::PatrolBossAtCamp(*pulled)
+                : pulled->GetExactDist(&camp) > DC_PULLBACK_RELEASE_RANGE))
             {
                 DcMovement::StopBot(bot, DcMovement::Stop::Soft);
                 DcFaceIfNeeded(bot, pulled);
@@ -2950,7 +3015,8 @@ bool DungeonClearPullManeuverAction::Execute(Event /*event*/)
             if (!bot->HasInArc(CAST_ANGLE_IN_FRONT, engageOn))
                 ServerFacade::instance().SetFacingTo(bot, engageOn);
             context->GetValue<Unit*>(DcKey::Stock::CurrentTarget)->Set(engageOn);
-            bot->Attack(engageOn, botAI->IsMelee(bot));
+            if (!embalming)
+                bot->Attack(engageOn, botAI->IsMelee(bot));
             botAI->ChangeEngine(BOT_STATE_COMBAT);
 
             // Report the MEASURED hold, not the threshold — when this fires late
@@ -3017,7 +3083,7 @@ bool DungeonClearPullManeuverAction::Execute(Event /*event*/)
     // only ground in reach that the rest of the room cannot see; planting "wherever
     // the pack glues on" would drop a six-mob fight in the doorway or, worse, back
     // inside the room next to the pack that has not been pulled yet.
-    if (DcSettings::GetBool(bot, "PullPlantEnable") && !pull.bossPullback &&
+    if (!embalming && DcSettings::GetBool(bot, "PullPlantEnable") && !pull.bossPullback &&
         pull.scriptedStage < 0)
     {
         float const glueRadius = DcSettings::GetFloat(bot, "PullPlantGlueRadius");
@@ -3115,10 +3181,11 @@ bool DungeonClearPullManeuverAction::Execute(Event /*event*/)
     // combat chase/attack can't grab the tank and fight at the pack instead.
     DC_PULL_TRACE("[DC:{}] pull returning: {:.1f}yd to camp ({} ms into leg)",
                   bot->GetName(), dist, legElapsed);
-    bool const moved =
-        DcMoveTo(bot->GetMapId(), camp.GetPositionX(), camp.GetPositionY(), camp.GetPositionZ(),
-                 /*idle*/ false, /*react*/ false, /*normal_only*/ false,
-                 /*exact_waypoint*/ false, MovementPriority::MOVEMENT_COMBAT);
+    bool const moved = patchwerk ? DcNaxx40Patchwerk::DrivePatrolReturn(botAI)
+        : pull.naxx40RangedStand && !embalming ? DcNaxx40Patchwerk::DriveSweepReturn(botAI, returnPoint)
+        : DcMoveTo(bot->GetMapId(), returnPoint.GetPositionX(), returnPoint.GetPositionY(), returnPoint.GetPositionZ(),
+                   /*idle*/ false, /*react*/ false, /*normal_only*/ false,
+                   /*exact_waypoint*/ false, MovementPriority::MOVEMENT_COMBAT);
 
     // BACKSTOP: refused, standing still, and a stale equal-priority LastMovement
     // wait is what's holding the retreat down. Every known source of one is cleared

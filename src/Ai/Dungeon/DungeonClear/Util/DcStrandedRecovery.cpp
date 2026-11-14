@@ -14,13 +14,16 @@
 #include "Ai/Dungeon/DungeonClear/Util/DcCombatFlag.h"
 #include "Ai/Dungeon/DungeonClear/Util/DcLeaderSignal.h"
 #include "Ai/Dungeon/DungeonClear/Util/DcPartyState.h"
+#include "Ai/Dungeon/DungeonClear/Util/DcPlayerbotCompat.h"
 #include "Ai/Dungeon/DungeonClear/Util/DcPullPlanner.h"
 #include "Ai/Dungeon/DungeonClear/Util/DcRun.h"
 #include "Ai/Dungeon/DungeonClear/Util/DcRunProgress.h"
 #include "Ai/Dungeon/DungeonClear/Util/DcStatusPublisher.h"
 #include "Ai/Dungeon/DungeonClear/Util/DcStrandedDecision.h"
 #include "Ai/Dungeon/DungeonClear/Util/DcTargeting.h"
+#include "Ai/Raid/Naxx40/Naxx40Encounter.h"
 
+#include <algorithm>
 #include <cmath>
 #include <optional>
 #include <string>
@@ -39,6 +42,14 @@
 
 namespace
 {
+    bool LivingPoisonControlsRun(Player const& anchor, DcRunState const& run)
+    {
+        uint32 const instanceId = anchor.GetInstanceId();
+        auto const& approach = run.naxx40GrobbulusApproach;
+        return instanceId && (run.naxx40Poison.instanceId == instanceId ||
+            (approach.instanceId == instanceId && approach.stage != DcRunState::GrobbulusApproach::Stage::Complete));
+    }
+
     // Walk the leader's same-map group into kernel rows and report whether the
     // party is FIGHTING. Recover re-walks the live group itself, so a plain value
     // snapshot is all the kernel needs here.
@@ -61,10 +72,14 @@ namespace
         if (!group)
             return;
 
+        bool const naxx40 = IsNaxx40Map(anchor->FindMap());
         for (GroupReference* ref = group->GetFirstMember(); ref; ref = ref->next())
         {
             Player* member = ref->GetSource();
             if (!member || !member->IsInWorld())
+                continue;
+            if (naxx40 && (!member->IsInMap(anchor) || !anchor->InSamePhase(member) ||
+                           DcPlayerbotCompat::IsHumanControlled(member)))
                 continue;
             // A rider is never rescued (see Recover), so it is never a stray
             // either — otherwise Decide would ask for a rescue Recover refuses,
@@ -194,10 +209,11 @@ namespace DcStrandedRecovery
             return false;
 
         uint32 const now = getMSTime();
+        bool const naxx40 = IsNaxx40Map(driver.anchor->FindMap());
 
         // A pause is an intentional hold, not a stall: keep the clock fresh so a
         // long Wait-at-Boss / door pause never makes the run look frozen on resume.
-        if (run.paused)
+        if (run.paused || (naxx40 && LivingPoisonControlsRun(*driver.anchor, run)))
         {
             DcRunProgress::Stamp(run.progress, now);
             return false;
@@ -248,7 +264,17 @@ namespace DcStrandedRecovery
         in.maxSpread = bounds.maxSpread;
         in.gateSpread = bounds.campSpread;
 
-        return DcStrandedDecision::Decide(in, members).recover;
+        if (!DcStrandedDecision::Decide(in, members).recover)
+            return false;
+        if (naxx40 && !GetNaxx40Landing(*driver.anchor, *driver.anchor, driver.anchor->GetPositionX(),
+                                       driver.anchor->GetPositionY()))
+        {
+            LOG_DEBUG("playerbots.dungeonclear", "[DC:{}] stranded-recovery: no dry landing at the Naxx40 anchor",
+                      driver.anchor->GetName());
+            DcRunProgress::Stamp(run.progress, now);
+            return false;
+        }
+        return true;
     }
 
     void Recover(Player* bot)
@@ -272,6 +298,11 @@ namespace DcStrandedRecovery
         float const lx = leader->GetPositionX();
         float const ly = leader->GetPositionY();
         float const lz = leader->GetPositionZ();
+        bool const naxx40 = IsNaxx40Map(leader->FindMap());
+        DcRunState& run = DcRun::Of(leaderAI);
+        if (naxx40 && (run.paused || LivingPoisonControlsRun(*leader, run) ||
+                       !GetNaxx40Landing(*leader, *leader, lx, ly)))
+            return;
 
         uint32 moved = 0;
         for (GroupReference* ref = group->GetFirstMember(); ref; ref = ref->next())
@@ -289,6 +320,9 @@ namespace DcStrandedRecovery
                 continue;
             if (!GET_PLAYERBOT_AI(member))       // bots only, never a human
                 continue;
+            if (naxx40 && (!member->IsInMap(leader) || !leader->InSamePhase(member) ||
+                           DcPlayerbotCompat::IsHumanControlled(member)))
+                continue;
             // Never a rider. NearTeleportTo ejects a passenger and leaves the
             // vehicle where it stood — on Trial of the Champion that is a horse at
             // the arena wall and a lance-armed bot on foot in the middle of a
@@ -305,12 +339,23 @@ namespace DcStrandedRecovery
             // one point, and drop any stale follow spline that would otherwise drag
             // them straight back toward wherever they were stuck.
             float const angle = leader->GetOrientation() + static_cast<float>(moved) * 0.7f;
-            float const off = 1.5f + 0.5f * static_cast<float>(moved);
-            float const tx = lx + std::cos(angle) * off;
-            float const ty = ly + std::sin(angle) * off;
+            float const radius = 1.5f + 0.5f * static_cast<float>(moved);
+            float const off = naxx40 ? std::min(radius, 3.0f) : radius;
+            Position destination(lx + std::cos(angle) * off, ly + std::sin(angle) * off, lz);
+            if (naxx40)
+            {
+                std::optional<Position> landing = GetNaxx40Landing(*leader, *member, destination.GetPositionX(),
+                                                                  destination.GetPositionY());
+                if (!landing)
+                    landing = GetNaxx40Landing(*leader, *member, lx, ly);
+                if (!landing)
+                    continue;
+                destination = *landing;
+            }
 
             member->GetMotionMaster()->Clear();
-            member->NearTeleportTo(tx, ty, lz, member->GetOrientation(),
+            member->NearTeleportTo(destination.GetPositionX(), destination.GetPositionY(), destination.GetPositionZ(),
+                                   member->GetOrientation(),
                                    /*casting*/ false, /*vehicle*/ false, /*withPet*/ true);
             ++moved;
 
@@ -376,7 +421,6 @@ namespace DcStrandedRecovery
         // re-fire. Give the run a fresh window for follow-tank + advance to resume
         // real progress. Re-seed the closing-distance mark from the tank's current
         // spot too, so a re-measure isn't fooled by the old best.
-        DcRunState& run = DcRun::Of(leaderAI);
         DcRunProgress::Stamp(run.progress, getMSTime());
         run.progress.bestDist = -1.0f;
 

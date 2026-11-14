@@ -49,6 +49,9 @@
 #include "Ai/Dungeon/DungeonClear/Util/ChunkedPathfinder.h"
 #include "Ai/Dungeon/DungeonClear/Util/DcDoorPolicy.h"
 #include "Ai/Dungeon/DungeonClear/Util/DcMovement.h"
+#include "Ai/Dungeon/DungeonClear/Util/DcNaxx40SlimeCrossing.h"
+#include "Ai/Dungeon/DungeonClear/Util/DcNaxx40LivingPoison.h"
+#include "Ai/Dungeon/DungeonClear/Util/DcNaxx40Patchwerk.h"
 #include "Ai/Dungeon/DungeonClear/Util/DcPathWorker.h"
 #include "Ai/Dungeon/DungeonClear/Util/DcSocialQuarantine.h"
 #include "Ai/Dungeon/DungeonClear/Util/DcTargeting.h"
@@ -1143,6 +1146,9 @@ DungeonClearAdvanceAction::Step DungeonClearAdvanceAction::DoPursue(AdvanceState
     float const engageDist = st.engageDist;
     DcApproachState& appr = *st.appr;
 
+    if (DcNaxx40SlimeCrossing::TryCrossTowards(botAI, {bossX, bossY, bossZ}))
+        return Step::ReturnTrue;
+
     // Sample closing progress BEFORE issuing this tick's move (engageDist is
     // start-of-tick, reflecting prior ticks' movement). The first pursuit tick
     // arms the baseline and reads as progress.
@@ -2114,7 +2120,7 @@ DungeonClearAdvanceAction::Step DungeonClearAdvanceAction::DoMoveToFallback(Adva
     return Step::ReturnTrue;
 }
 
-bool DungeonClearAdvanceAction::Execute(Event /*event*/)
+bool DungeonClearAdvanceAction::Execute(Event event)
 {
     // SOCIAL QUARANTINE upkeep, before every guard below — including the ones that
     // bail. This rung and the pull FSM between them tick in every state the leader
@@ -2145,6 +2151,9 @@ bool DungeonClearAdvanceAction::Execute(Event /*event*/)
     // from a capture: PARK -> auto-pausing -> "advance tick" -> "spline issued".)
     if (DcRun::Of(context).paused)
         return false;
+
+    if (DcNaxx40SlimeCrossing::CrossingActive(bot))
+        return true;
 
     // Hard PULL-OWNERSHIP guard, for the same already-queued-action reason as the
     // pause guard above: DungeonClearIdleTrigger stands this rung down for the
@@ -2203,6 +2212,9 @@ bool DungeonClearAdvanceAction::Execute(Event /*event*/)
         return false;
     }
 
+    if (PauseForCthun(botAI, *next, event))
+        return true;
+
     // All per-approach counters/latches + the long-path cache state live in one
     // owned struct (see DcApproachState); the local references below alias its
     // fields so the phase logic reads/writes one place and resets in lockstep.
@@ -2227,8 +2239,10 @@ bool DungeonClearAdvanceAction::Execute(Event /*event*/)
     // arm. Fetching the boss is the engage action's job, not the route's.
     bool const pullback =
         BossPullbackRegistry::Find(bot->GetMapId(), next->entry) != nullptr;
+    // The Patchwerk pre-clear owns the only approach to his patrol.
+    bool const patchwerk = DcNaxx40Patchwerk::SetApproachAnchor(bot, context, *next);
     Creature* const liveBoss =
-        pullback ? nullptr : DcTargeting::GetLiveBoss(bot, context, next->entry);
+        pullback || patchwerk ? nullptr : DcTargeting::GetLiveBoss(bot, context, next->entry);
     float const bossX = liveBoss ? liveBoss->GetPositionX() : next->x;
     float const bossY = liveBoss ? liveBoss->GetPositionY() : next->y;
     float const bossZ = liveBoss ? liveBoss->GetPositionZ() : next->z;
@@ -2248,8 +2262,7 @@ bool DungeonClearAdvanceAction::Execute(Event /*event*/)
     // is true while the tank passes UNDER an upper-floor boss en route to the
     // ramp — honoring it there stops the tank dead under the boss forever. Must
     // match the trigger ladder, which gates on the same predicate.
-    bool const atBoss =
-        DcTickMemoAccess::AtBossEngage(bot, context, *next);
+    bool const atBoss = !patchwerk && DcTickMemoAccess::AtBossEngage(bot, context, *next);
 
     // Back inside engage range: clear the dead-end escalation counter and the
     // direct-pursuit give-up latch so a boss that wanders back out can be
@@ -2304,14 +2317,62 @@ bool DungeonClearAdvanceAction::Execute(Event /*event*/)
     // cutoffs clear the corpse and reopen the pull.
     if (Step s = TryLootYield(st); s != Step::Continue)
         return s == Step::ReturnTrue;
+
+    if (DcNaxx40LivingPoison::BeginApproach(botAI, next->entry))
+        return true;
+
+    if (DcNaxx40Patchwerk::SweepInProgress(bot, context, next->entry) ||
+        DcNaxx40Patchwerk::ShouldStart(bot, context, next->entry))
+    {
+        if (Step s = TryBetweenPullsRest(st); s != Step::Continue)
+            return s == Step::ReturnTrue;
+        switch (DcNaxx40Patchwerk::Drive(botAI, context, next->entry))
+        {
+            case DcNaxx40Patchwerk::SweepResult::Moving:
+                ClearStall(context);
+                SetPhase(context, "Patchwerk trash route");
+                return true;
+            case DcNaxx40Patchwerk::SweepResult::Clearing:
+                ClearStall(context);
+                SetPhase(context, "clearing Patchwerk trash");
+                return false;
+            case DcNaxx40Patchwerk::SweepResult::Waiting:
+                DcMovement::StopBot(bot, DcMovement::Stop::Hold);
+                ClearStall(context);
+                SetPhase(context, "waiting at the Patchwerk camp");
+                return true;
+            case DcNaxx40Patchwerk::SweepResult::Blocked:
+                DcMovement::StopBot(bot, DcMovement::Stop::Hold);
+                SetPhase(context, "waiting on the Patchwerk route");
+                return true;
+            case DcNaxx40Patchwerk::SweepResult::Inactive:
+                break;
+        }
+    }
+
+    if (patchwerk && DcTickMemoAccess::ScriptedStage(bot, context))
+    {
+        DcMovement::StopBot(bot, DcMovement::Stop::Hold);
+        return false;
+    }
+
+    if (DcNaxx40Patchwerk::AtEmbalmingHandoff(bot, context, next->entry))
+    {
+        if (Step s = TryBetweenPullsRest(st); s != Step::Continue)
+            return s == Step::ReturnTrue;
+        DcNaxx40Patchwerk::HoldForEmbalming(botAI);
+        return true;
+    }
+
     if (Step s = TryEngageHold(st); s != Step::Continue)
         return s == Step::ReturnTrue;
     if (Step s = TryEngageWalkYield(st); s != Step::Continue)
         return s == Step::ReturnTrue;
     if (Step s = TryBetweenPullsRest(st); s != Step::Continue)
         return s == Step::ReturnTrue;
-    if (Step s = TryBossNotPresentStall(st); s != Step::Continue)
-        return s == Step::ReturnTrue;
+    if (!patchwerk)
+        if (Step s = TryBossNotPresentStall(st); s != Step::Continue)
+            return s == Step::ReturnTrue;
 
     // Bookkeeping: on a boss change wipe the per-approach counters so a stale
     // count from the previous pull doesn't bleed into the new approach. The
@@ -2425,6 +2486,16 @@ bool DungeonClearAdvanceAction::Execute(Event /*event*/)
     }
 
     TryReanchorStaleCursor(st);  // mutates st.hop / cursor; never terminates the tick
+
+    if (DcNaxx40SlimeCrossing::IsNearBank(bot) &&
+        DcNaxx40SlimeCrossing::TryCross(botAI, DungeonPathFollower::BuildSplineWindow(
+            bot, path, follower, DcNaxx40SlimeCrossing::RouteLookahead)))
+    {
+        appr.longPathExpiresMs = 0;
+        ClearStall(context);
+        SetPhase(context, "crossing slime");
+        return true;
+    }
 
     // Sync the legacy "current hop" telemetry — `dc status` and a few tests
     // still read it. Map the flattened polyline cursor onto its segment index.

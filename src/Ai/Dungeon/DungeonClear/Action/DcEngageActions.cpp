@@ -69,6 +69,8 @@
 #include "Ai/Dungeon/DungeonClear/Util/DcTankForm.h"
 #include "Ai/Dungeon/DungeonClear/Util/DcTargeting.h"
 #include "Ai/Dungeon/DungeonClear/Util/DcTickMemo.h"
+#include "Ai/Dungeon/DungeonClear/Util/DcNaxx40LivingPoison.h"
+#include "Ai/Dungeon/DungeonClear/Util/DcNaxx40Patchwerk.h"
 #include "Ai/Dungeon/DungeonClear/Util/DcWaitAtBossDecision.h"
 #include "Ai/Dungeon/DungeonClear/Util/DungeonClearTuning.h"
 #include "Ai/Dungeon/DungeonClear/Util/DungeonClearUtil.h"
@@ -547,7 +549,8 @@ std::optional<Position> DungeonClearEngageActionBase::RoomAggroSkirtPoint(Unit* 
         AI_VALUE(std::optional<DungeonBossInfo>, DcKey::NextDungeonBoss);
     if (!next.has_value())
         return std::nullopt;
-    if (!RoomAggroRegistry::Find(bot->GetMapId(), next->entry))
+    if (!RoomAggroRegistry::Find(bot->GetMapId(), next->entry) &&
+        !DcNaxx40Patchwerk::SweepInProgress(bot, context, next->entry))
         return std::nullopt;
     if (AI_VALUE(GuidVector, DcKey::RoomTrashRemaining).empty())
         return std::nullopt;
@@ -675,14 +678,24 @@ bool DungeonClearEngageActionBase::MoveToStandSkirtingRoomAggro(Unit* pack,
 // wrong side of a wall; we keep walking in that case until anchors are cleared.
 // Likewise a boss one floor up is 3D-near but not atBoss, so the tank keeps
 // walking the route up to its level instead of parking underneath.
-bool DungeonClearEngageTrashAction::Execute(Event /*event*/)
+bool DungeonClearEngageTrashAction::Execute(Event event)
 {
     // Pause guard — same already-queued-action race as DungeonClearAdvanceAction.
     if (DcRun::Of(context).paused)
         return false;
+    if (!bot->IsInCombat() && DcNaxx40LivingPoison::OwnsGrobbulusApproach(botAI))
+        return false;
 
     std::optional<DungeonBossInfo> next = AI_VALUE(std::optional<DungeonBossInfo>, DcKey::NextDungeonBoss);
     if (!next.has_value())
+        return false;
+
+    if (DcNaxx40Patchwerk::SweepInProgress(bot, context, next->entry) ||
+        DcNaxx40Patchwerk::ShouldStart(bot, context, next->entry) ||
+        DcNaxx40Patchwerk::AtEmbalmingHandoff(bot, context, next->entry))
+        return false;
+    bool const patchwerk = DcNaxx40Patchwerk::SetApproachAnchor(bot, context, *next);
+    if (patchwerk && DcTickMemoAccess::ScriptedStage(bot, context))
         return false;
 
     ObjectGuid const stickyGuid =
@@ -787,6 +800,12 @@ bool DungeonClearEngageTrashAction::Execute(Event /*event*/)
         context->GetValue<DcApproachState&>(DcKey::ApproachState)->Get();
     if (target && appr.engageWalkGivenUp.Has(target->GetGUID(), getMSTime()))
         target = nullptr;
+
+    if (PauseForCthun(botAI, *next, event, target))
+        return true;
+
+    if (patchwerk && target && DcTargeting::IsDungeonBossEntry(context, target->GetEntry()))
+        return false;
 
     if (!target)
     {
@@ -968,6 +987,12 @@ bool DungeonClearEngageBossAction::Execute(Event event)
     std::optional<DungeonBossInfo> next = AI_VALUE(std::optional<DungeonBossInfo>, DcKey::NextDungeonBoss);
     if (!next.has_value())
         return false;
+    if (DcNaxx40Patchwerk::BlocksBossPull(bot, context, next->entry) ||
+        DcNaxx40LivingPoison::BlocksGrobbulusPull(botAI, next->entry))
+        return false;
+
+    if (PauseForCthun(botAI, *next, event))
+        return true;
 
     // Travel objectives are not creatures — the trigger's kind guard, repeated for
     // the already-queued-basket race: the trigger passed on the boss, the boss died
@@ -1037,6 +1062,17 @@ bool DungeonClearEngageBossAction::Execute(Event event)
             botAI->DoSpecificAction("dc status", event, true);
             return true;
         }
+    }
+
+    if (DcNaxx40Patchwerk::UsesPatrolCamp(bot, context, next->entry))
+    {
+        if (!DcNaxx40Patchwerk::AtPatrolCamp(bot, context))
+            return false;
+        DcMovement::StopBot(bot, DcMovement::Stop::Hold);
+        SetPhase(context, "waiting for Patchwerk's patrol at the white camp");
+        if (DcNaxx40Patchwerk::BeginPatrolPull(botAI, context, boss))
+            ClearStall(context);
+        return true;
     }
 
     // VAELASTRASZ THE CORRUPT is opened by a GOSSIP, not by a pull, and until he
@@ -1278,6 +1314,10 @@ bool DungeonClearRoomPreClearHoldAction::Execute(Event /*event*/)
 
 bool DungeonClearClearStalledAction::Execute(Event /*event*/)
 {
+    if (std::optional<DungeonBossInfo> const next = AI_VALUE(std::optional<DungeonBossInfo>, DcKey::NextDungeonBoss);
+        next && DcNaxx40Patchwerk::UsesPatrolCamp(bot, context, next->entry))
+        return false;
+
     // The stall's own pull is over (DungeonClearMath::StallPullIsDone): clear the
     // stall and hand the tick back to Advance, which re-stalls within
     // DC_STUCK_LIMIT refused moves if the way really is shut. Waiting for Advance
@@ -3070,8 +3110,9 @@ bool DungeonClearDoorBlockedAction::Execute(Event event)
         // the same cached long-path Advance builds. Targeting the static anchor
         // here while Advance targets the live boss would flip the shared cache's
         // built-toward position every tick and thrash rebuilds.
-        Creature* const liveBoss = DcTargeting::GetLiveBoss(bot, context, next->entry);
         DungeonBossInfo effectiveTarget = *next;
+        Creature* const liveBoss = DcNaxx40Patchwerk::SetApproachAnchor(bot, context, effectiveTarget)
+            ? nullptr : DcTargeting::GetLiveBoss(bot, context, next->entry);
         if (liveBoss)
         {
             effectiveTarget.x = liveBoss->GetPositionX();

@@ -23,6 +23,7 @@
 #include "Ai/Dungeon/DungeonClear/Settings/DcSettings.h"
 #include "Ai/Dungeon/DungeonClear/Util/DcEngageGeometry.h"
 #include "Ai/Dungeon/DungeonClear/Util/DcLeaderSignal.h"
+#include "Ai/Dungeon/DungeonClear/Util/DcNaxx40Patchwerk.h"
 #include "Ai/Dungeon/DungeonClear/Util/DcStatusPublisher.h"
 #include "Ai/Dungeon/DungeonClear/Util/DcTargeting.h"
 #include "Ai/Dungeon/DungeonClear/Util/DcTickMemo.h"
@@ -59,6 +60,9 @@ GuidVector DungeonClearRoomTrashValue::Calculate()
         noteSent = false;
         return out;
     }
+
+    if (DcNaxx40Patchwerk::SweepInProgress(bot, context, next->entry))
+        return DcNaxx40Patchwerk::LocalTrash(bot, context);
 
     RoomAggroBoss const* room =
         RoomAggroRegistry::Find(bot->GetMapId(), next->entry);

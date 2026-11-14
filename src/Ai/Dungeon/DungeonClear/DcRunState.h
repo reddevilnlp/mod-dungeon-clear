@@ -9,6 +9,7 @@
 #include <cmath>
 #include <cstdio>
 #include <cstdlib>
+#include <optional>
 #include <string>
 #include <utility>
 #include <unordered_map>
@@ -16,6 +17,7 @@
 
 #include "G3D/Vector3.h"
 #include "ObjectGuid.h"
+#include "Position.h"
 #include "Timer.h"
 
 #include "Ai/Dungeon/DungeonClear/Util/DcChessConductor.h"
@@ -83,6 +85,66 @@ struct DcRunState
     // Util/DcBossStandDown). Stamped rather than re-derived so the flag is
     // one honest fact of the run session, cleared with it by Reset().
     bool        raidRun = false;
+
+    struct LivingPoisonCrossing
+    {
+        std::vector<ObjectGuid> members;
+        std::size_t nextGate = 0;
+        uint32 lastProgress = 0;
+        uint32 lastAttempt = 0;
+        uint32 instanceId = 0;
+        uint32 stagedAt = 0;
+        std::size_t arrived = 0;
+        bool crossingLane = false;
+        std::string waitingFor;
+    } naxx40Poison;
+    ObjectGuid naxx40PoisonOwner;
+    uint32 naxx40PoisonSpline = 0;
+    uint32 naxx40PoisonInstance = 0;
+    uint32 naxx40PoisonCompletedInstance = 0;
+
+    struct GrobbulusApproach
+    {
+        enum class Stage { Approach, Crossing, Muster, Pull, Regroup, Complete };
+        uint32 instanceId = 0;
+        Stage stage = Stage::Approach;
+        std::vector<ObjectGuid> members;
+        std::vector<ObjectGuid> wave;
+        std::size_t checkpoint = 0;
+        std::size_t arrived = 0;
+        uint32 lastProgress = 0;
+        uint32 lastAttempt = 0;
+        uint32 waves = 0;
+    } naxx40GrobbulusApproach;
+
+    struct PatchwerkCampRoute
+    {
+        uint32 instanceId = 0;
+        std::size_t checkpoint = 0;
+        bool reachedCamp = false;
+    } naxx40GrobbulusCamp;
+
+    struct EmbalmingCamp
+    {
+        std::optional<Position> camp;
+        std::unordered_map<ObjectGuid, Position> slimes;
+        ObjectGuid group;
+        uint32 instanceId = 0;
+        uint32 checkedAt = 0;
+        bool authored = false;
+    } embalmingCamp;
+
+    struct PatchwerkSweep
+    {
+        uint32 instanceId = 0;
+        std::size_t checkpoint = 0;
+        bool reachedCheckpoint = false;
+        bool returningToWestStart = false;
+        bool reportedSurvivors = false;
+        bool reportedEastClear = false;
+        std::size_t lastCrossingReported = 0;
+        std::string preparationWarning;
+    } patchwerkSweep;
 
     // Short human phrase describing WHY the run is paused, for the status panel to
     // tell a manual `dc pause` apart from a door auto-pause. Set at each pause site

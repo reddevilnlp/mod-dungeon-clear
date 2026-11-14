@@ -38,6 +38,9 @@
 #include "Ai/Dungeon/DungeonClear/Util/DcHazard.h"
 #include "Ai/Dungeon/DungeonClear/Util/DcLootPolicy.h"
 #include "Ai/Dungeon/DungeonClear/Data/DcHazardRegistry.h"
+#include "Ai/Dungeon/DungeonClear/Util/DcNaxx40Embalming.h"
+#include "Ai/Dungeon/DungeonClear/Util/DcNaxx40LivingPoison.h"
+#include "Ai/Dungeon/DungeonClear/Util/DcNaxx40Patchwerk.h"
 #include "Ai/Dungeon/DungeonClear/Util/DcNoStopZone.h"
 #include "Ai/Dungeon/DungeonClear/Util/DcPartyState.h"
 #include "Ai/Dungeon/DungeonClear/Util/DcPlayerbotCompat.h"
@@ -279,6 +282,14 @@ bool DungeonClearAtBossTrigger::IsActive()
 
     // Close enough AND on the boss's own floor (not just 3D-near while passing
     // under an upper-floor boss). See IsAtBossEngage.
+    if (DcNaxx40Patchwerk::UsesPatrolCamp(bot, context, next->entry))
+    {
+        if (!DcNaxx40Patchwerk::AtPatrolCamp(bot, context) || DcRezRecovery::IsPending(bot))
+            return false;
+        return !DcRaidMuster::Holds(bot, botAI, context, *next);
+    }
+    if (DcNaxx40LivingPoison::BlocksGrobbulusPull(botAI, next->entry))
+        return false;
     if (!DcTickMemoAccess::AtBossEngage(bot, context, *next))
         return false;
 
@@ -595,16 +606,25 @@ bool DungeonClearBlockingTrashTrigger::IsActive()
         return false;
     if (!bot || bot->isDead() || !MayDrive(bot, context))
         return false;
+    if (!bot->IsInCombat() && DcNaxx40LivingPoison::OwnsGrobbulusApproach(botAI))
+        return false;
 
     std::optional<DungeonBossInfo> next = AI_VALUE(std::optional<DungeonBossInfo>, DcKey::NextDungeonBoss);
     if (!next.has_value())
+        return false;
+    if (DcNaxx40Patchwerk::SweepInProgress(bot, context, next->entry) ||
+        DcNaxx40Patchwerk::ShouldStart(bot, context, next->entry) ||
+        DcNaxx40Patchwerk::AtEmbalmingHandoff(bot, context, next->entry))
         return false;
 
     // At the boss (close AND on its floor), the at-boss trigger handles the
     // pull — don't also scan for blocking trash. While merely passing under an
     // upper-floor boss this is false, so trash on the way to the ramp still gets
     // cleared. See IsAtBossEngage.
-    if (DcTickMemoAccess::AtBossEngage(bot, context, *next))
+    bool const patchwerk = DcNaxx40Patchwerk::SetApproachAnchor(bot, context, *next);
+    if (!patchwerk && DcTickMemoAccess::AtBossEngage(bot, context, *next))
+        return false;
+    if (patchwerk && DcTickMemoAccess::ScriptedStage(bot, context))
         return false;
 
     // Wait between pulls for loot, party catch-up, and rest.
@@ -676,7 +696,7 @@ bool DungeonClearBlockingTrashTrigger::IsActive()
         trash = DcTargeting::FindBlockingTrash(
             bot, *next, DC_TRASH_CONE_RANGE, DC_TRASH_CONE_HALF_ANGLE, candidates);
 
-    if (!trash)
+    if (!trash || (patchwerk && DcTargeting::IsDungeonBossEntry(context, trash->GetEntry())))
         return false;
 
     // Don't engage a pack on the FAR side of a closed door. Some doors aren't
@@ -770,6 +790,14 @@ bool DungeonClearRoomTrashTrigger::IsActive()
     // Only at a flagged boss with room trash still up.
     if (!DcTargeting::IsRoomClearActive(bot, context))
         return false;
+
+    if (std::optional<DungeonBossInfo> const next = AI_VALUE(std::optional<DungeonBossInfo>, DcKey::NextDungeonBoss);
+        next && DcNaxx40Patchwerk::SweepInProgress(bot, context, next->entry))
+    {
+        Unit* const trash = DcTargeting::NearestRoomTrash(bot, context);
+        if (trash && trash->GetGUID() == AI_VALUE(DcPullContext&, DcKey::PullContext).abortTarget)
+            return IsBetweenPullsReady(bot, context);
+    }
 
     // When pull-to-camp is in effect for this pack, the higher-priority pull
     // pipeline (relevance 35) owns the room clear so it honours the advanced/
@@ -1230,6 +1258,9 @@ bool DungeonClearPullTrigger::IsActive()
     // camp gates — consults the same value, so whichever runs first updates it.
     // No-op for Off/On, where DcPullAction owns the bool.
     bool const pullModeCurrent = AI_VALUE(bool, DcKey::PullModeCurrent);
+    if (DcNaxx40LivingPoison::OwnsGrobbulusApproach(botAI) &&
+        AI_VALUE(DcPullContext&, DcKey::PullContext).phase == DcPullPhase::Idle)
+        return false;
 
     // Razorgore's egg run stands this rung down too, and it matters most here: a
     // maneuver walks the tank OUT to a pack and drags it back, which during the
@@ -1334,6 +1365,10 @@ bool DungeonClearPullTrigger::IsActive()
     std::optional<DungeonBossInfo> next = AI_VALUE(std::optional<DungeonBossInfo>, DcKey::NextDungeonBoss);
     if (!next.has_value())
         return false;
+    bool const patchwerkSweep = DcNaxx40Patchwerk::SweepInProgress(bot, context, next->entry);
+    if (patchwerkSweep ? !DcTargeting::IsRoomClearActive(bot, context)
+                       : DcNaxx40Patchwerk::ShouldStart(bot, context, next->entry))
+        return false;
     // Parked at a pending-summon boss (e.g. RFD's gong -> Tuten'kash): do NOT
     // start a pull. The tank must hold at the anchor to run the event (ring,
     // fight the wave, ring again); a dynamic pull here latches a distant trash
@@ -1349,7 +1384,8 @@ bool DungeonClearPullTrigger::IsActive()
     // a PULL-BACK boss: the pull pipeline is the ONLY thing that may engage him,
     // because the walk-in engage would go to where he stands — which for Ghaz'an is
     // the middle of a lake.
-    if (DcTickMemoAccess::AtBossEngage(bot, context, *next) &&
+    if (!DcNaxx40Patchwerk::UsesPatrolCamp(bot, context, next->entry) &&
+        DcTickMemoAccess::AtBossEngage(bot, context, *next) &&
         !DcTargeting::IsRoomClearActive(bot, context) && !pullback)
         return false;
     if (!IsBetweenPullsReady(bot, context))
@@ -1497,6 +1533,8 @@ bool DungeonClearHoldAtCampTrigger::IsActive()
 {
     if (!bot || bot->isDead() || bot->IsInCombat())
         return false;
+    if (DcNaxx40Embalming::GetCamp(bot))
+        return true;
     // The leader drives the pull; it never holds at its own camp.
     if (DcLeaderSignal::IsDungeonClearLeader(bot))
         return false;
@@ -1519,6 +1557,15 @@ bool DungeonClearHoldAtCampCombatTrigger::IsActive()
     // scouting (Idle) it deliberately does NOT fire, so the party fights normally.
     if (!bot || bot->isDead() || !bot->IsInCombat())
         return false;
+    if (DcNaxx40Patchwerk::HasPatrolPosition(bot))
+        return true;
+    bool isPuller = false;
+    if (DcNaxx40Embalming::GetCamp(bot, &isPuller))
+    {
+        DcPullContext const& pull = AI_VALUE(DcPullContext&, DcKey::PullContext);
+        if (!isPuller || !DcLeaderSignal::IsPullPhaseHolding(static_cast<uint32>(pull.phase)))
+            return true;
+    }
     // The leader drives the pull; it never holds at its own camp.
     if (DcLeaderSignal::IsDungeonClearLeader(bot))
         return false;

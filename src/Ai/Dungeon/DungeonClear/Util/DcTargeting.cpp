@@ -63,6 +63,7 @@
 #include "Ai/Dungeon/DungeonClear/Data/DungeonBossInfo.h"
 #include "Ai/Dungeon/DungeonClear/Data/DungeonEventRegistry.h"
 #include "Ai/Dungeon/DungeonClear/Data/RoomAggroRegistry.h"
+#include "Ai/Dungeon/DungeonClear/Util/DcNaxx40Patchwerk.h"
 #include "Ai/Dungeon/DungeonClear/Util/DcTickMemo.h"
 #include "Ai/Dungeon/DungeonClear/Util/DungeonEventExecutor.h"
 #include "Ai/Dungeon/DungeonClear/DcPullContext.h"
@@ -738,6 +739,13 @@ Unit* DcTargeting::FindPullTarget(PlayerbotAI* botAI, DungeonBossInfo const& nex
         // engage's own not-present handling reports it.
     }
 
+    // The sweep supplies the targets for its current checkpoint. A corridor
+    // fallback could lead the tank off the checked route before the next leg.
+    if (DcNaxx40Patchwerk::SweepInProgress(bot, context, next.entry))
+        return NearestRoomTrash(bot, context);
+    if (DcNaxx40Patchwerk::ShouldStart(bot, context, next.entry))
+        return nullptr;
+
     // Same look-ahead / band the blocking-trash trigger uses; keep them aligned
     // so the pull aims at the very pack the normal flow would otherwise pull.
     constexpr float kLookAhead = kPullLookAhead;
@@ -791,10 +799,12 @@ Unit* DcTargeting::FindPullTarget(PlayerbotAI* botAI, DungeonBossInfo const& nex
     else
     {
         Movement::PointsArray corridor;
-        if (DcEngageGeometry::ComputeCorridor(bot, next.x, next.y, next.z, corridor))
+        DungeonBossInfo approach = next;
+        DcNaxx40Patchwerk::SetApproachAnchor(bot, context, approach);
+        if (DcEngageGeometry::ComputeCorridor(bot, approach.x, approach.y, approach.z, corridor))
             trash = FindBlockingTrashCorridor(bot, corridor, kLookAhead, kWidth, candidates);
         else
-            trash = FindBlockingTrash(bot, next, kConeRange, kConeHalfAngle, candidates);
+            trash = FindBlockingTrash(bot, approach, kConeRange, kConeHalfAngle, candidates);
     }
 
     if (!trash)
@@ -911,6 +921,18 @@ bool DcTargeting::IsStickyPullTargetValid(Player* bot, AiObjectContext* ctx, Uni
         ctx->GetValue<DcPullContext&>(DcKey::PullContext)->Get();
     if (!pull.abortTarget.IsEmpty() && u->GetGUID() == pull.abortTarget)
         return false;
+
+    if (bot->GetMapId() == 533)
+    {
+        std::optional<DungeonBossInfo> const next =
+            ctx->GetValue<std::optional<DungeonBossInfo>>(DcKey::NextDungeonBoss)->Get();
+        if (next && DcNaxx40Patchwerk::SweepInProgress(bot, ctx, next->entry))
+        {
+            GuidVector const& trash = ctx->GetValue<GuidVector>(DcKey::RoomTrashRemaining)->Get();
+            if (std::find(trash.begin(), trash.end(), u->GetGUID()) == trash.end())
+                return false;
+        }
+    }
 
     // Same for a room-trash pack with no clean lane while a cleaner one is left:
     // it is pulled last (see NearestRoomTrash), so the latch must let go of it.
@@ -1258,6 +1280,8 @@ bool DcTargeting::IsRoomClearActive(Player* bot, AiObjectContext* ctx)
         ctx->GetValue<std::optional<DungeonBossInfo>>(DcKey::NextDungeonBoss)->Get();
     if (!next.has_value())
         return false;
+    if (DcNaxx40Patchwerk::SweepInProgress(bot, ctx, next->entry))
+        return !ctx->GetValue<GuidVector>(DcKey::RoomTrashRemaining)->Get().empty();
     if (!RoomAggroRegistry::Find(bot->GetMapId(), next->entry))
         return false;
 
@@ -1309,6 +1333,8 @@ bool DcTargeting::RoomClearForcesAdvanced(Player* bot, AiObjectContext* ctx)
         ctx->GetValue<std::optional<DungeonBossInfo>>(DcKey::NextDungeonBoss)->Get();
     if (!next.has_value())
         return false;
+    if (DcNaxx40Patchwerk::SweepInProgress(bot, ctx, next->entry))
+        return IsRoomClearActive(bot, ctx);
     RoomAggroBoss const* room = RoomAggroRegistry::Find(bot->GetMapId(), next->entry);
     if (!room || room->pullOutRadius <= 0.0f)
         return false;
@@ -1517,7 +1543,8 @@ Unit* DcTargeting::NearestHostileNearPoint(Player* bot, AiObjectContext* ctx,
                                            std::vector<uint32> const* entryFilter,
                                            Position const* rankFrom,
                                            ObjectGuid exclude,
-                                           Position const* awayFrom)
+                                           Position const* awayFrom,
+                                           std::vector<ObjectGuid::LowType> const* spawnFilter)
 {
     if (!bot || !ctx || radius <= 0.0f)
         return nullptr;
@@ -1548,6 +1575,13 @@ Unit* DcTargeting::NearestHostileNearPoint(Player* bot, AiObjectContext* ctx,
         if (filtered && std::find(entryFilter->begin(), entryFilter->end(),
                                   u->GetEntry()) == entryFilter->end())
             continue;
+        if (spawnFilter && !spawnFilter->empty())
+        {
+            Creature const* const creature = u->ToCreature();
+            if (!creature || std::find(spawnFilter->begin(), spawnFilter->end(), creature->GetSpawnId()) ==
+                                 spawnFilter->end())
+                continue;
+        }
         if (!AttackersValue::IsPossibleTarget(u, bot))
             continue;
         if (DcNeverTargetRegistry::IsNeverTarget(bot->GetMapId(), u->GetEntry(), u->GetPositionX(), u->GetPositionY()))

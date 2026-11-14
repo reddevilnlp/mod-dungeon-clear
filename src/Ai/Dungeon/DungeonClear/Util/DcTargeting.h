@@ -356,7 +356,8 @@ public:
                                          std::vector<uint32> const* entryFilter = nullptr,
                                          Position const* rankFrom = nullptr,
                                          ObjectGuid exclude = ObjectGuid::Empty,
-                                         Position const* awayFrom = nullptr);
+                                         Position const* awayFrom = nullptr,
+                                         std::vector<ObjectGuid::LowType> const* spawnFilter = nullptr);
 
 };
 

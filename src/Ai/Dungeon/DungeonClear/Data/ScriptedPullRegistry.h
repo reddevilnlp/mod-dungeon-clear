@@ -10,6 +10,7 @@
 #include <vector>
 
 #include "Define.h"
+#include "ObjectGuid.h"
 
 class Player;
 class Unit;
@@ -194,6 +195,10 @@ struct ScriptedPullStage
     // faction 190 and sit at the centre of both guard packs), and a stage that
     // counted one would never report its pack cleared.
     std::vector<uint32> entries;
+
+    // Optional exact identities for a fixed pack; bounds still select the
+    // safe position to tag it from.
+    std::vector<ObjectGuid::LowType> spawnIds;
 
     // TAKE THE TAG BY WALKING INTO THE PACK — never with a ranged opener.
     //

@@ -7,6 +7,7 @@
 #define _PLAYERBOT_DC_MOVEMENT_H
 
 #include "G3D/Vector3.h"
+#include "MotionMaster.h"
 #include "MoveSplineInitArgs.h"
 #include "Ai/Base/Value/LastMovementValue.h"
 
@@ -111,7 +112,8 @@ namespace DcMovement
     // hold the live position at [0] and at least one more
     // point. Returns true iff the spline was issued (pts.size() >= 2).
     bool SplinePath(PlayerbotAI* botAI, Movement::PointsArray& pts,
-                    MovementPriority recordPrio = MovementPriority::MOVEMENT_NORMAL);
+                    MovementPriority recordPrio = MovementPriority::MOVEMENT_NORMAL,
+                    ForcedMovement forcedMovement = FORCED_MOVEMENT_NONE);
 
     // The pause/teardown gate. False once the run is paused, so movement issuance
     // bails (the queued-action race fix). Exposed for the MoveTo funnel and for

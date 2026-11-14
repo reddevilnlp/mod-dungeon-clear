@@ -168,7 +168,7 @@ namespace DcMovement
     }
 
     bool SplinePath(PlayerbotAI* botAI, Movement::PointsArray& pts,
-                    MovementPriority recordPrio)
+                    MovementPriority recordPrio, ForcedMovement forcedMovement)
     {
         if (!botAI)
             return false;
@@ -201,7 +201,7 @@ namespace DcMovement
         for (size_t i = 1; i < pts.size(); ++i)
             windowLen += (pts[i] - pts[i - 1]).magnitude();
 
-        mm->MoveSplinePath(&pts, FORCED_MOVEMENT_NONE);
+        mm->MoveSplinePath(&pts, forcedMovement);
 
         // DID IT ACTUALLY LAUNCH? MotionMaster::MoveSplinePath returns void and has
         // three silent no-ops: it early-returns on UNIT_FLAG_DISABLE_MOVE without
