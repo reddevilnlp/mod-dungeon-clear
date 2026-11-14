@@ -19,6 +19,7 @@
 #include "DcPlayerbotCompat.h"
 #include "DcRaidMuster.h"
 #include "DcRun.h"
+#include "DungeonClearTuning.h"
 #include "DungeonPathFollower.h"
 #include "Group.h"
 #include "InstanceScript.h"
