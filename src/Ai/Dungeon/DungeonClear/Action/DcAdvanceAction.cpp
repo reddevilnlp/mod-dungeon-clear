@@ -51,6 +51,7 @@
 #include "Ai/Dungeon/DungeonClear/Util/DcMovement.h"
 #include "Ai/Dungeon/DungeonClear/Util/DcNaxx40SlimeCrossing.h"
 #include "Ai/Dungeon/DungeonClear/Util/DcNaxx40GluthTransit.h"
+#include "Ai/Dungeon/DungeonClear/Util/DcNaxx40Gothik.h"
 #include "Ai/Dungeon/DungeonClear/Util/DcNaxx40Razuvious.h"
 #include "Ai/Dungeon/DungeonClear/Util/DcNaxx40Thaddius.h"
 #include "Ai/Dungeon/DungeonClear/Util/DcNaxx40WingPortal.h"
@@ -2250,11 +2251,13 @@ bool DungeonClearAdvanceAction::Execute(Event event)
     // The Patchwerk pre-clear owns the only approach to his patrol.
     DcNaxx40Patchwerk::ObserveEntry(bot, context, next->entry);
     bool const patchwerk = DcNaxx40Patchwerk::SetApproachAnchor(bot, context, *next);
+    bool const gothik = DcNaxx40Gothik::UsesRangedPull(bot, next->entry);
     Creature* const liveBoss =
-        pullback || patchwerk ? nullptr : DcTargeting::GetLiveBoss(bot, context, next->entry);
-    float const bossX = liveBoss ? liveBoss->GetPositionX() : next->x;
-    float const bossY = liveBoss ? liveBoss->GetPositionY() : next->y;
-    float const bossZ = liveBoss ? liveBoss->GetPositionZ() : next->z;
+        pullback || patchwerk || gothik ? nullptr : DcTargeting::GetLiveBoss(bot, context, next->entry);
+    Position const target = gothik ? DcNaxx40Gothik::PullPoint() : Position{next->x, next->y, next->z};
+    float const bossX = liveBoss ? liveBoss->GetPositionX() : target.GetPositionX();
+    float const bossY = liveBoss ? liveBoss->GetPositionY() : target.GetPositionY();
+    float const bossZ = liveBoss ? liveBoss->GetPositionZ() : target.GetPositionZ();
     float const engageDist = bot->GetDistance(bossX, bossY, bossZ);
 
     // Hand-off distance: the boss's real aggro bubble (+reaches/margin) when it
@@ -2271,7 +2274,8 @@ bool DungeonClearAdvanceAction::Execute(Event event)
     // is true while the tank passes UNDER an upper-floor boss en route to the
     // ramp — honoring it there stops the tank dead under the boss forever. Must
     // match the trigger ladder, which gates on the same predicate.
-    bool const atBoss = !patchwerk && DcTickMemoAccess::AtBossEngage(bot, context, *next);
+    bool const atBoss = gothik ? DcNaxx40Gothik::AtPullPoint(*bot) :
+        !patchwerk && DcTickMemoAccess::AtBossEngage(bot, context, *next);
 
     // Back inside engage range: clear the dead-end escalation counter and the
     // direct-pursuit give-up latch so a boss that wanders back out can be

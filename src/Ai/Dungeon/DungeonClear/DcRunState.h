@@ -163,6 +163,7 @@ struct DcRunState
         uint32 stageBlocked = 0;
         bool useNormalPull = false;
     } naxx40RazuviousOpening;
+    uint32 naxx40GothikTagMs = 0;
 
     struct ThaddiusOpening
     {

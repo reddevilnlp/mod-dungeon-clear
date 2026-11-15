@@ -70,6 +70,7 @@
 #include "Ai/Dungeon/DungeonClear/Util/DcTargeting.h"
 #include "Ai/Dungeon/DungeonClear/Util/DcTickMemo.h"
 #include "Ai/Dungeon/DungeonClear/Util/DcNaxx40GluthTransit.h"
+#include "Ai/Dungeon/DungeonClear/Util/DcNaxx40Gothik.h"
 #include "Ai/Dungeon/DungeonClear/Util/DcNaxx40Razuvious.h"
 #include "Ai/Dungeon/DungeonClear/Util/DcNaxx40Thaddius.h"
 #include "Ai/Dungeon/DungeonClear/Util/DcNaxx40LivingPoison.h"
@@ -1010,6 +1011,9 @@ bool DungeonClearEngageBossAction::Execute(Event event)
     bool const razuviousOpening = DcNaxx40Razuvious::UsesOpening(botAI, next->entry);
     if (razuviousOpening && !DcNaxx40Razuvious::AtCamp(*bot))
         return false;
+    bool const gothikRangedPull = DcNaxx40Gothik::UsesRangedPull(bot, next->entry);
+    if (gothikRangedPull && !DcNaxx40Gothik::AtPullPoint(*bot))
+        return false;
 
     Creature* boss = DcTargeting::GetLiveBoss(bot, context, next->entry);
     if (!boss)
@@ -1075,6 +1079,8 @@ bool DungeonClearEngageBossAction::Execute(Event event)
 
     if (razuviousOpening && DcNaxx40Razuvious::Open(botAI, *boss))
         return true;
+    if (gothikRangedPull)
+        return DcNaxx40Gothik::TryRangedPull(botAI, *boss);
 
     if (DcNaxx40Patchwerk::UsesPatrolCamp(bot, context, next->entry))
     {

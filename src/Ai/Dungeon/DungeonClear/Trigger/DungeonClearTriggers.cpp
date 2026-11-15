@@ -40,6 +40,7 @@
 #include "Ai/Dungeon/DungeonClear/Data/DcHazardRegistry.h"
 #include "Ai/Dungeon/DungeonClear/Util/DcNaxx40Embalming.h"
 #include "Ai/Dungeon/DungeonClear/Util/DcNaxx40GluthTransit.h"
+#include "Ai/Dungeon/DungeonClear/Util/DcNaxx40Gothik.h"
 #include "Ai/Dungeon/DungeonClear/Util/DcNaxx40Razuvious.h"
 #include "Ai/Dungeon/DungeonClear/Util/DcNaxx40Thaddius.h"
 #include "Ai/Dungeon/DungeonClear/Util/DcNaxx40LivingPoison.h"
@@ -299,7 +300,8 @@ bool DungeonClearAtBossTrigger::IsActive()
         DcNaxx40Thaddius::BlocksGeneric(bot, next->entry) ||
         DcNaxx40LivingPoison::BlocksGrobbulusPull(botAI, next->entry))
         return false;
-    if (!DcTickMemoAccess::AtBossEngage(bot, context, *next))
+    bool const gothik = DcNaxx40Gothik::UsesRangedPull(bot, next->entry);
+    if (gothik ? !DcNaxx40Gothik::AtPullPoint(*bot) : !DcTickMemoAccess::AtBossEngage(bot, context, *next))
         return false;
 
     // Room-wide-aggro boss (RoomAggroRegistry): on engage it force-pulls the
