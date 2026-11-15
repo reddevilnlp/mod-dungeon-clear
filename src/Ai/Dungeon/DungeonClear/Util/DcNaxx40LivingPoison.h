@@ -9,16 +9,21 @@
 
 class Player;
 class PlayerbotAI;
+class Creature;
 
 namespace DcNaxx40LivingPoison
 {
     inline constexpr uint32 GrobbulusEntry = 351003;
     inline constexpr uint32 GrobbulusEastPullOrder = 4;
+    inline constexpr uint32 GrobbulusWestPullOrder = 6;
+    inline constexpr uint32 GrobbulusSouthPullOrder = 7;
     bool BeginApproach(PlayerbotAI* ai, uint32 nextBoss);
     bool BlocksGrobbulusPull(PlayerbotAI* ai, uint32 nextBoss);
-    bool GrobbulusEastPullReady(Player* tank);
+    bool UsesGrobbulusPatrol(PlayerbotAI* ai, uint32 nextBoss);
+    bool TryGrobbulusPatrolPull(PlayerbotAI* ai, Creature& boss);
+    bool GrobbulusScriptedPullReady(Player* tank, uint32 order);
     bool OwnsGrobbulusApproach(PlayerbotAI* ai);
-    bool OwnsMovement(PlayerbotAI* ai);
+    bool OwnsMovement(PlayerbotAI* ai, bool forRest = false);
     bool IsCrossingLane(Player* player);
     void RegisterMapUpdate();
 }

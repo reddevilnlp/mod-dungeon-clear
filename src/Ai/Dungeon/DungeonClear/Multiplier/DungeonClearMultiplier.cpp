@@ -427,11 +427,14 @@ float DungeonClearMultiplier::GetValue(Action* action)
         DcNaxx40WingPortal::OwnsMovement(botAI))
         return 0.0f;
 
-    if (bot->GetMapId() == 533 && !bot->IsInCombat() && name != "naxx40 leave slime" &&
-        (dynamic_cast<MovementAction*>(action) || name == "food" || name == "drink" ||
+    bool const grobbulusPatrolEngage = name == "dungeon clear engage boss" &&
+        DcNaxx40LivingPoison::UsesGrobbulusPatrol(botAI, DcNaxx40LivingPoison::GrobbulusEntry);
+    bool const restAction = name == "food" || name == "drink";
+    if (bot->GetMapId() == 533 && !bot->IsInCombat() && name != "naxx40 leave slime" && !grobbulusPatrolEngage &&
+        (dynamic_cast<MovementAction*>(action) || restAction ||
          name == "open loot" || name == "loot" || name == "dungeon clear advance" ||
          name == "dungeon clear recover stranded") &&
-        (DcNaxx40LivingPoison::OwnsMovement(botAI) || DcNaxx40SlimeCrossing::CrossingActive(bot)))
+        (DcNaxx40LivingPoison::OwnsMovement(botAI, restAction) || DcNaxx40SlimeCrossing::CrossingActive(bot)))
         return 0.0f;
 
     // An old Moon mark must not hand over control before Dungeon Clear parks at the entrance.

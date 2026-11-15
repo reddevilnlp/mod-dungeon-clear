@@ -47,9 +47,8 @@ namespace
     bool LivingPoisonControlsRun(Player const& anchor, DcRunState const& run)
     {
         uint32 const instanceId = anchor.GetInstanceId();
-        auto const& approach = run.naxx40GrobbulusApproach;
         return instanceId && (run.naxx40Poison.instanceId == instanceId ||
-            (approach.instanceId == instanceId && approach.stage != DcRunState::GrobbulusApproach::Stage::Complete));
+            run.naxx40GrobbulusApproach.instanceId == instanceId);
     }
 
     bool GluthTransitControlsRun(Player* owner, PlayerbotAI* ai)

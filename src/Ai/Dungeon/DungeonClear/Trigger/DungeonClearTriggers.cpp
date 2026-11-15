@@ -309,7 +309,8 @@ bool DungeonClearAtBossTrigger::IsActive()
         DcNaxx40LivingPoison::BlocksGrobbulusPull(botAI, next->entry))
         return false;
     bool const gothik = DcNaxx40Gothik::UsesRangedPull(bot, next->entry);
-    if (gothik ? !DcNaxx40Gothik::AtPullPoint(*bot) : !DcTickMemoAccess::AtBossEngage(bot, context, *next))
+    bool const grobbulusPatrol = DcNaxx40LivingPoison::UsesGrobbulusPatrol(botAI, next->entry);
+    if (gothik ? !DcNaxx40Gothik::AtPullPoint(*bot) : !grobbulusPatrol && !DcTickMemoAccess::AtBossEngage(bot, context, *next))
         return false;
 
     // Room-wide-aggro boss (RoomAggroRegistry): on engage it force-pulls the

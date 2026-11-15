@@ -1097,6 +1097,9 @@ bool DungeonClearEngageBossAction::Execute(Event event)
         return true;
     if (gothikRangedPull)
         return DcNaxx40Gothik::TryRangedPull(botAI, *boss);
+    if (DcNaxx40LivingPoison::UsesGrobbulusPatrol(botAI, next->entry) &&
+        DcNaxx40LivingPoison::TryGrobbulusPatrolPull(botAI, *boss))
+        return true;
 
     if (DcNaxx40Patchwerk::UsesPatrolCamp(bot, context, next->entry))
     {

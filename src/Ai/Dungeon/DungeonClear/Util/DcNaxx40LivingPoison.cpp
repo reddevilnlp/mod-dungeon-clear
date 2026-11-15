@@ -19,6 +19,7 @@
 #include "DcNaxx40Patchwerk.h"
 #include "DcNaxx40SlimeCrossing.h"
 #include "DcPlayerbotCompat.h"
+#include "DcRaidMuster.h"
 #include "DcRun.h"
 #include "DcRunProgress.h"
 #include "Group.h"
@@ -86,9 +87,39 @@ namespace
     constexpr float GrobbulusArrival = 0.65f;
     constexpr std::size_t GrobbulusWaveSize = 4;
     constexpr uint32 GrobbulusUpdateInterval = 150;
+    constexpr uint32 GrobbulusPatrolWaitMs = 300000;
+    constexpr float GrobbulusMusterRadius = 4.0f;
     G3D::Vector3 const GrobbulusLanding{3318.366f, -3263.8232f, 292.595f};
     G3D::Vector3 const EastPullCamp{3288.0f, -3266.0f, 292.595f};
     G3D::Vector3 const GrobbulusRegroup{3322.8599f, -3285.572f, 292.59506f};
+    G3D::Vector3 const WestPullCamp{3249.0f, -3265.0f, 292.595f};
+    G3D::Vector3 const SouthPullCamp{3295.0f, -3305.0f, 292.595f};
+    G3D::Vector3 const GrobbulusPatrolCamp{3261.028f, -3309.9338f, 292.5953f};
+    G3D::Vector3 const EastTurn{3304.0f, -3284.0f, 292.595f};
+    G3D::Vector3 const NorthFloor{3274.0f, -3266.0f, 292.595f};
+    G3D::Vector3 const PatrolApproach{3275.5f, -3302.9f, 292.595f};
+    std::array<G3D::Vector3, 4> const PointOneToWest{{EastTurn, EastPullCamp, NorthFloor, WestPullCamp}};
+    std::array<G3D::Vector3, 4> const WestToSouth{{NorthFloor, EastPullCamp, EastTurn, SouthPullCamp}};
+    std::array<G3D::Vector3, 2> const PointOneToSouth{{EastTurn, SouthPullCamp}};
+    std::array<G3D::Vector3, 2> const PatrolRoute{{PatrolApproach, GrobbulusPatrolCamp}};
+
+    struct SpawnLocation
+    {
+        ObjectGuid::LowType spawn;
+        float x;
+        float y;
+    };
+
+    constexpr std::array<SpawnLocation, 2> EastSpewers{{
+        {361185, 3331.06f, -3322.79f}, {361186, 3330.77f, -3299.13f},
+    }};
+    constexpr std::array<SpawnLocation, 3> WestSpewers{{
+        {362042, 3200.39f, -3309.29f}, {361181, 3197.16f, -3337.31f}, {361182, 3200.55f, -3277.20f},
+    }};
+    constexpr std::array<SpawnLocation, 2> SouthSpewers{{
+        {361179, 3264.63f, -3357.66f}, {361180, 3288.33f, -3359.58f},
+    }};
+    constexpr SpawnLocation GrobbulusSpawn{361183, 3205.5f, -3320.3f};
     std::array<G3D::Vector3, 7> const GrobbulusDryApproach{{
         {3200.0f, -3157.0f, 293.771f},
         {3220.0f, -3176.5f, 293.810f},
@@ -296,7 +327,8 @@ namespace
 
     // A declared checkpoint is a short, surveyed dry leg. If the member drifted
     // off that line, use a checked navmesh path from its actual position.
-    void MoveToDryStop(Player* member, G3D::Vector3 const& target, float radius = GrobbulusArrival)
+    void MoveToDryStop(Player* member, G3D::Vector3 const& target, float radius = GrobbulusArrival,
+                       bool stayOnFloor = false)
     {
         if (AtDryStop(member, target, radius))
         {
@@ -311,25 +343,42 @@ namespace
         auto path = DcNaxx40SlimeCrossing::BuildSurveyedDryLeg(member, target);
         if (path.empty())
             path = DcNaxx40SlimeCrossing::BuildDryCampPath(member, Position(target.x, target.y, target.z));
+        if (stayOnFloor && std::ranges::any_of(path, [&](G3D::Vector3 const& point)
+            { return std::abs(point.z - target.z) > 1.5f; }))
+            return;
         if (!path.empty())
             DcMovement::SplinePath(GET_PLAYERBOT_AI(member), path);
     }
 
-    bool EastSpewersAlive(Player* tank)
+    Creature* FindLivingSpawn(Player* tank, SpawnLocation const& spawn)
     {
         Map* const map = tank->GetMap();
-        for (float const y : {-3322.79f, -3299.13f})
-            if (!map->IsGridLoaded(3331.0f, y))
-                map->LoadGrid(3331.0f, y);
+        if (!map->IsGridLoaded(spawn.x, spawn.y))
+            map->LoadGrid(spawn.x, spawn.y);
         auto const& spawns = map->GetCreatureBySpawnIdStore();
-        for (ObjectGuid::LowType const spawn : {361185, 361186})
-        {
-            auto const [first, last] = spawns.equal_range(spawn);
-            for (auto it = first; it != last; ++it)
-                if (Creature const* mob = it->second; mob->IsInWorld() && mob->IsAlive() && tank->InSamePhase(mob))
-                    return true;
-        }
-        return false;
+        auto const [first, last] = spawns.equal_range(spawn.spawn);
+        for (auto it = first; it != last; ++it)
+            if (Creature* mob = it->second; mob->IsInWorld() && mob->IsAlive() && tank->InSamePhase(mob))
+                return mob;
+        return nullptr;
+    }
+
+    template <std::size_t Size>
+    bool SpewersAlive(Player* tank, std::array<SpawnLocation, Size> const& pack)
+    {
+        return std::ranges::any_of(pack, [tank](SpawnLocation const& spawn) { return FindLivingSpawn(tank, spawn); });
+    }
+
+    bool IsSpewerPull(GrobbulusStage stage)
+    {
+        return stage == GrobbulusStage::Pull || stage == GrobbulusStage::WestPull || stage == GrobbulusStage::SouthPull;
+    }
+
+    bool PatrolCampCanMuster(Creature const& boss)
+    {
+        return std::abs(boss.GetPositionZ() - GrobbulusPatrolCamp.z) > 4.0f ||
+            (boss.GetExactDist2d(GrobbulusPatrolCamp.x, GrobbulusPatrolCamp.y) > 34.0f &&
+             boss.GetExactDist2d(PatrolApproach.x, PatrolApproach.y) > 34.0f);
     }
 
     bool CanRejoinGrobbulusFromFarBank(Player* member)
@@ -355,6 +404,7 @@ namespace
     void ChangeGrobbulusStage(DcRunState::GrobbulusApproach& leg, GrobbulusStage stage, uint32 now)
     {
         leg.stage = stage;
+        leg.checkpoint = 0;
         leg.arrived = 0;
         leg.lastProgress = now;
     }
@@ -399,13 +449,13 @@ namespace
         }
 
         auto setPhase = [&](char const* phase) { DcActionShared::SetPhase(context, phase); };
-        uint32 const timeout = leg.stage == GrobbulusStage::Pull
-            ? DC_SCRIPTED_PULL_MUSTER_MS + NoProgressTimeout
-            : NoProgressTimeout;
+        bool const followingPatrol = leg.stage == GrobbulusStage::PatrolMuster || leg.stage == GrobbulusStage::Patrol;
+        uint32 const timeout = followingPatrol ? GrobbulusPatrolWaitMs :
+            (IsSpewerPull(leg.stage) ? DC_SCRIPTED_PULL_MUSTER_MS + NoProgressTimeout : NoProgressTimeout);
         if (getMSTimeDiff(leg.lastProgress, now) >= timeout)
         {
             run.paused = true;
-            run.pauseReason = "Grobbulus: check the door, east pull or missing bots, then resume";
+            run.pauseReason = "Grobbulus: check the dry approach, Spewers or missing bots, then resume";
             setPhase("waiting on the Grobbulus approach");
             LOG_WARN("playerbots.dungeonclear", "[DC:{}] Grobbulus approach blocked at stage {}; {}/{} present, {} arrived",
                      owner->GetName(), static_cast<uint32>(leg.stage), members.size(), leg.members.size(), leg.arrived);
@@ -439,7 +489,7 @@ namespace
             }
             return count == leg.members.size();
         };
-        auto moveGroup = [&](G3D::Vector3 const& target, float radius)
+        auto moveGroup = [&](G3D::Vector3 const& target, float radius, bool stayOnFloor = false)
         {
             std::size_t arrived = 0;
             for (Player* member : members)
@@ -450,9 +500,17 @@ namespace
                     ++arrived;
                 }
                 else
-                    MoveToDryStop(member, target, radius);
+                    MoveToDryStop(member, target, radius, stayOnFloor);
             }
             return countArrival(arrived);
+        };
+        auto moveRoute = [&](auto const& route)
+        {
+            if (!moveGroup(route[leg.checkpoint], GrobbulusMusterRadius, true))
+                return false;
+            leg.arrived = 0;
+            leg.lastProgress = now;
+            return ++leg.checkpoint == route.size();
         };
 
         switch (leg.stage)
@@ -504,7 +562,7 @@ namespace
                     LOG_INFO("playerbots.dungeonclear", "[DC:{}] Grobbulus: {}/{} reached dry landing in {} waves",
                              owner->GetName(), cleared, leg.members.size(), leg.waves);
                     ChangeGrobbulusStage(leg,
-                        EastSpewersAlive(owner) ? GrobbulusStage::Muster : GrobbulusStage::Regroup, now);
+                        SpewersAlive(owner, EastSpewers) ? GrobbulusStage::Muster : GrobbulusStage::Regroup, now);
                     break;
                 }
                 for (Player* member : members)
@@ -548,7 +606,7 @@ namespace
                     ChangeGrobbulusStage(leg, GrobbulusStage::Pull, now);
                 break;
             case GrobbulusStage::Pull:
-                if (!EastSpewersAlive(owner))
+                if (!SpewersAlive(owner, EastSpewers))
                 {
                     LOG_INFO("playerbots.dungeonclear", "[DC:{}] Grobbulus: east Spewers clear (361185, 361186)",
                              owner->GetName());
@@ -561,14 +619,67 @@ namespace
                 {
                     LOG_INFO("playerbots.dungeonclear", "[DC:{}] Grobbulus: {}/{} bots regrouped at point 1",
                              owner->GetName(), members.size(), leg.members.size());
-                    ChangeGrobbulusStage(leg, GrobbulusStage::Complete, now);
+                    ChangeGrobbulusStage(leg, GrobbulusStage::WestMuster, now);
                     context->GetValue<ChunkedPathfinder::Result&>(DcKey::LongPath)->Reset();
                     context->GetValue<DcApproachState&>(DcKey::ApproachState)->Get().Reset();
                     DcActionShared::ClearStall(context);
-                    setPhase("moving");
                 }
                 break;
-            case GrobbulusStage::Complete:
+            case GrobbulusStage::WestMuster:
+                setPhase("taking the lower floor to the west Spewer camp");
+                if (!SpewersAlive(owner, WestSpewers) && leg.checkpoint == 0 && Near(owner, GrobbulusRegroup, 6.0f))
+                {
+                    ChangeGrobbulusStage(leg, GrobbulusStage::SouthMuster, now);
+                    // Unlike a normal west clear, nobody moved away from point 1.
+                    leg.fromPointOne = true;
+                }
+                else if (moveRoute(PointOneToWest))
+                    ChangeGrobbulusStage(leg, GrobbulusStage::WestPull, now);
+                break;
+            case GrobbulusStage::WestPull:
+                setPhase("clearing the west Spewers from the lower floor");
+                if (!SpewersAlive(owner, WestSpewers))
+                {
+                    LOG_INFO("playerbots.dungeonclear", "[DC:{}] Grobbulus: west Spewers clear (362042, 361181, 361182)",
+                             owner->GetName());
+                    ChangeGrobbulusStage(leg, GrobbulusStage::SouthMuster, now);
+                }
+                break;
+            case GrobbulusStage::SouthMuster:
+                setPhase("mustering at the south Spewer camp");
+                if (leg.fromPointOne ? moveRoute(PointOneToSouth) : moveRoute(WestToSouth))
+                    ChangeGrobbulusStage(leg, GrobbulusStage::SouthPull, now);
+                break;
+            case GrobbulusStage::SouthPull:
+                setPhase("clearing the south Spewers from the lower floor");
+                if (!SpewersAlive(owner, SouthSpewers))
+                {
+                    LOG_INFO("playerbots.dungeonclear", "[DC:{}] Grobbulus: south Spewers clear (361179, 361180)",
+                             owner->GetName());
+                    ChangeGrobbulusStage(leg, GrobbulusStage::PatrolMuster, now);
+                }
+                break;
+            case GrobbulusStage::PatrolMuster:
+            {
+                auto const next = context->GetValue<std::optional<DungeonBossInfo>>(DcKey::NextDungeonBoss)->Get();
+                if (next && DcRaidMuster::Holds(owner, ai, context, *next))
+                {
+                    setPhase("preparing at the Grobbulus safe camp");
+                    break;
+                }
+                setPhase("waiting for the dry path to Grobbulus point 3");
+                if (Creature const* boss = FindLivingSpawn(owner, GrobbulusSpawn);
+                    (leg.checkpoint || (boss && PatrolCampCanMuster(*boss))) && moveRoute(PatrolRoute))
+                {
+                    LOG_INFO("playerbots.dungeonclear", "[DC:{}] Grobbulus: {}/{} bots holding at point 3 on the lower floor",
+                             owner->GetName(), members.size(), leg.members.size());
+                    ChangeGrobbulusStage(leg, GrobbulusStage::Patrol, now);
+                }
+                break;
+            }
+            case GrobbulusStage::Patrol:
+                setPhase("waiting for Grobbulus on the lower patrol");
+                moveGroup(GrobbulusPatrolCamp, GrobbulusMusterRadius, true);
                 break;
         }
     }
@@ -579,7 +690,7 @@ namespace
         uint32 const instanceId = owner->GetInstanceId();
         auto& leg = run.naxx40GrobbulusApproach;
         if (leg.instanceId == instanceId)
-            return leg.stage != GrobbulusStage::Complete;
+            return true;
 
         bool const fromRefuge = Near(owner, Stops.back(), 6.0f);
         bool const ownerOnFarBank = !fromRefuge && CanRejoinGrobbulusFromFarBank(owner);
@@ -618,7 +729,7 @@ namespace
         }
         if (allOnFarBank)
         {
-            leg.stage = EastSpewersAlive(owner) ? GrobbulusStage::Muster : GrobbulusStage::Regroup;
+            leg.stage = SpewersAlive(owner, EastSpewers) ? GrobbulusStage::Muster : GrobbulusStage::Regroup;
             LOG_INFO("playerbots.dungeonclear", "[DC:{}] Grobbulus: resuming on the dry side with {} bots ({})",
                      owner->GetName(), leg.members.size(),
                      leg.stage == GrobbulusStage::Muster ? "east pull camp" : "point 1");
@@ -927,8 +1038,7 @@ namespace
                     continue;
                 }
 
-                if (run.naxx40GrobbulusApproach.instanceId == instanceId &&
-                    run.naxx40GrobbulusApproach.stage != GrobbulusStage::Complete)
+                if (run.naxx40GrobbulusApproach.instanceId == instanceId)
                 {
                     AiObjectContext* const context = ai->GetAiObjectContext();
                     auto const next = context->GetValue<std::optional<DungeonBossInfo>>(DcKey::NextDungeonBoss)->Get();
@@ -1052,20 +1162,79 @@ bool BlocksGrobbulusPull(PlayerbotAI* ai, uint32 nextBoss)
         return false;
     DcRunState const& run = DcRun::Of(ai);
     uint32 const instanceId = bot->GetInstanceId();
-    if (run.naxx40GrobbulusApproach.instanceId == instanceId)
-        return run.naxx40GrobbulusApproach.stage != GrobbulusStage::Complete;
+    auto const& approach = run.naxx40GrobbulusApproach;
+    if (approach.instanceId == instanceId)
+    {
+        if (approach.stage != GrobbulusStage::Patrol || !AtDryStop(bot, GrobbulusPatrolCamp, GrobbulusMusterRadius))
+            return true;
+        Creature const* boss = FindLivingSpawn(bot, GrobbulusSpawn);
+        if (!boss || std::abs(boss->GetPositionZ() - GrobbulusPatrolCamp.z) > 1.5f ||
+            bot->GetExactDist2d(boss) > 27.0f || !bot->IsWithinLOSInMap(boss))
+            return true;
+        return std::ranges::any_of(approach.members, [&](ObjectGuid guid)
+        {
+            Player* member = GetMember(bot, guid);
+            return !member || !AtDryStop(member, GrobbulusPatrolCamp, GrobbulusMusterRadius);
+        });
+    }
     return run.naxx40PoisonCompletedInstance != instanceId &&
         (run.naxx40Poison.instanceId == instanceId || run.naxx40GrobbulusCamp.instanceId == instanceId);
 }
 
-bool GrobbulusEastPullReady(Player* tank)
+bool UsesGrobbulusPatrol(PlayerbotAI* ai, uint32 nextBoss)
+{
+    Player* const tank = ai->GetBot();
+    auto const& approach = DcRun::Of(ai).naxx40GrobbulusApproach;
+    return nextBoss == Grobbulus && IsNaxx40Map(tank->FindMap()) && approach.instanceId == tank->GetInstanceId() &&
+        approach.stage == GrobbulusStage::Patrol;
+}
+
+bool TryGrobbulusPatrolPull(PlayerbotAI* ai, Creature& boss)
+{
+    Player* const tank = ai->GetBot();
+    if (boss.IsInCombat() || BlocksGrobbulusPull(ai, boss.GetEntry()))
+        return true;
+    if (tank->IsWithinMeleeRange(&boss))
+        return false;
+
+    uint32 const now = getMSTime();
+    auto& lastTag = DcRun::Of(ai).naxx40GrobbulusApproach.lastTag;
+    if (lastTag && getMSTimeDiff(lastTag, now) < 3000)
+        return true;
+    lastTag = now;
+
+    auto const opener = DcActionShared::ResolvePullSpell(ai, tank);
+    float const distance = tank->GetExactDist(&boss);
+    if (!opener || distance < opener->minRange || distance > opener->maxRange)
+        return true;
+    DcMovement::StopBot(tank, DcMovement::Stop::HardPin);
+    tank->SetSelection(boss.GetGUID());
+    tank->SetFacingToObject(&boss);
+    if (ai->CastSpell(opener->spellId, &boss))
+    {
+        DcActionShared::ClearStall(ai->GetAiObjectContext());
+        LOG_INFO("playerbots.dungeonclear", "[DC:{}] Grobbulus: ranged tag from point 3, spell {} at {:.1f}yd",
+                 tank->GetName(), opener->spellId, distance);
+    }
+    return true;
+}
+
+bool GrobbulusScriptedPullReady(Player* tank, uint32 order)
 {
     PlayerbotAI* const ai = GET_PLAYERBOT_AI(tank);
     if (!ai || !IsNaxx40Map(tank->FindMap()))
         return false;
     DcRunState const& run = DcRun::Of(ai);
-    return run.enabled && !run.paused && run.naxx40GrobbulusApproach.instanceId == tank->GetInstanceId() &&
-        run.naxx40GrobbulusApproach.stage == GrobbulusStage::Pull;
+    auto const& approach = run.naxx40GrobbulusApproach;
+    if (!run.enabled || run.paused || approach.instanceId != tank->GetInstanceId())
+        return false;
+    switch (order)
+    {
+        case GrobbulusEastPullOrder: return approach.stage == GrobbulusStage::Pull;
+        case GrobbulusWestPullOrder: return approach.stage == GrobbulusStage::WestPull;
+        case GrobbulusSouthPullOrder: return approach.stage == GrobbulusStage::SouthPull;
+        default: return false;
+    }
 }
 
 bool OwnsGrobbulusApproach(PlayerbotAI* ai)
@@ -1075,11 +1244,13 @@ bool OwnsGrobbulusApproach(PlayerbotAI* ai)
         return false;
     DcRunState const& run = DcRun::Of(ai);
     auto const& leg = run.naxx40GrobbulusApproach;
-    return run.enabled && leg.instanceId == tank->GetInstanceId() &&
-        leg.stage != GrobbulusStage::Pull && leg.stage != GrobbulusStage::Complete;
+    if (!run.enabled || leg.instanceId != tank->GetInstanceId() || IsSpewerPull(leg.stage))
+        return false;
+    auto const next = ai->GetAiObjectContext()->GetValue<std::optional<DungeonBossInfo>>(DcKey::NextDungeonBoss)->Get();
+    return next && next->entry == Grobbulus;
 }
 
-bool OwnsMovement(PlayerbotAI* ai)
+bool OwnsMovement(PlayerbotAI* ai, bool forRest)
 {
     Player* bot = ai->GetBot();
     if (!IsNaxx40Map(bot->FindMap()))
@@ -1102,8 +1273,14 @@ bool OwnsMovement(PlayerbotAI* ai)
     if (run.naxx40Poison.instanceId == bot->GetInstanceId())
         return true;
     auto const& leg = run.naxx40GrobbulusApproach;
-    return leg.instanceId == bot->GetInstanceId() && leg.stage != GrobbulusStage::Pull &&
-        leg.stage != GrobbulusStage::Complete &&
+    if (forRest)
+    {
+        if (leg.stage == GrobbulusStage::PatrolMuster && AtDryStop(bot, SouthPullCamp, GrobbulusMusterRadius))
+            return false;
+        if (leg.stage == GrobbulusStage::Patrol && AtDryStop(bot, GrobbulusPatrolCamp, GrobbulusMusterRadius))
+            return false;
+    }
+    return OwnsGrobbulusApproach(ownerAI) &&
         std::ranges::find(leg.members, bot->GetGUID()) != leg.members.end();
 }
 

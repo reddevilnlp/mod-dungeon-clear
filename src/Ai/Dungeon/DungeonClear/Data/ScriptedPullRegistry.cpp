@@ -619,6 +619,51 @@ namespace
             acolytes.keepOnPackFloor = true;
             t.push_back(acolytes);
 
+            // The stand has a dry approach and line of sight to the northern member of the west formation.
+            ScriptedPullStage westSpewers;
+            westSpewers.mapId = 533;
+            westSpewers.bossEntry = DcNaxx40LivingPoison::GrobbulusEntry;
+            westSpewers.order = DcNaxx40LivingPoison::GrobbulusWestPullOrder;
+            westSpewers.name = "Naxx40 - Grobbulus west Spewers";
+            westSpewers.campX = 3249.0f;
+            westSpewers.campY = -3265.0f;
+            westSpewers.campZ = 292.595f;
+            westSpewers.standX = 3228.0f;
+            westSpewers.standY = -3268.0f;
+            westSpewers.standZ = 292.595f;
+            westSpewers.packX = 3199.37f;
+            westSpewers.packY = -3307.25f;
+            westSpewers.packZ = 292.596f;
+            westSpewers.packRadius = 33.0f;
+            westSpewers.packZBand = 2.0f;
+            westSpewers.armRadius = 12.0f;
+            westSpewers.entries = {351027};
+            westSpewers.spawnIds = {361181, 361182, 362042};
+            westSpewers.keepOnPackFloor = true;
+            t.push_back(westSpewers);
+
+            ScriptedPullStage southSpewers;
+            southSpewers.mapId = 533;
+            southSpewers.bossEntry = DcNaxx40LivingPoison::GrobbulusEntry;
+            southSpewers.order = DcNaxx40LivingPoison::GrobbulusSouthPullOrder;
+            southSpewers.name = "Naxx40 - Grobbulus south Spewers";
+            southSpewers.campX = 3295.0f;
+            southSpewers.campY = -3305.0f;
+            southSpewers.campZ = 292.595f;
+            southSpewers.standX = 3296.0f;
+            southSpewers.standY = -3332.0f;
+            southSpewers.standZ = 292.595f;
+            southSpewers.packX = 3276.48f;
+            southSpewers.packY = -3358.62f;
+            southSpewers.packZ = 292.688f;
+            southSpewers.packRadius = 14.0f;
+            southSpewers.packZBand = 2.0f;
+            southSpewers.armRadius = 12.0f;
+            southSpewers.entries = {351027};
+            southSpewers.spawnIds = {361179, 361180};
+            southSpewers.keepOnPackFloor = true;
+            t.push_back(southSpewers);
+
             ScriptedPullStage east;
             east.mapId      = MGT_MAP;
             east.bossEntry  = MGT_SELIN;
@@ -947,7 +992,7 @@ ScriptedPullStage const* ScriptedPullRegistry::DueStage(Player* bot, AiObjectCon
         if (s->bossEntry != next->entry)
             continue;
         if (s->bossEntry == DcNaxx40LivingPoison::GrobbulusEntry &&
-            !DcNaxx40LivingPoison::GrobbulusEastPullReady(bot))
+            !DcNaxx40LivingPoison::GrobbulusScriptedPullReady(bot, s->order))
             continue;
         if (s->bossEntry == Naxx40PatchwerkEntry &&
             (!DcNaxx40Patchwerk::UsesPatrolCamp(bot, ctx, next->entry) ||

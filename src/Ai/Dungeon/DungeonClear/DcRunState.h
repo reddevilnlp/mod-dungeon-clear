@@ -105,7 +105,8 @@ struct DcRunState
 
     struct GrobbulusApproach
     {
-        enum class Stage { Approach, Crossing, Muster, Pull, Regroup, Complete };
+        enum class Stage { Approach, Crossing, Muster, Pull, Regroup, WestMuster, WestPull,
+                           SouthMuster, SouthPull, PatrolMuster, Patrol };
         uint32 instanceId = 0;
         Stage stage = Stage::Approach;
         std::vector<ObjectGuid> members;
@@ -115,6 +116,8 @@ struct DcRunState
         uint32 lastProgress = 0;
         uint32 lastAttempt = 0;
         uint32 waves = 0;
+        uint32 lastTag = 0;
+        bool fromPointOne = false;
     } naxx40GrobbulusApproach;
 
     struct GluthTransit

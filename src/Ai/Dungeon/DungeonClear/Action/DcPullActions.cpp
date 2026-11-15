@@ -1331,7 +1331,7 @@ bool DungeonClearPullAction::Execute(Event /*event*/)
                     AbandonScriptedStage(pull);
                     DcSetPullPhase(context, DcPullPhase::Idle);
                     context->GetValue<ObjectGuid>(DcKey::PullTarget)->Reset();
-                    StallDungeonClear(botAI, "Four Horsemen: retrying the Acolyte pull on the upper floor.");
+                    StallDungeonClear(botAI, std::string(floorStage->name) + ": retrying at the same floor.");
                     return true;
                 }
                 if (pull.naxx40RangedStand && next && DcNaxx40Patchwerk::NoteSweepTagTimeout(bot, context, next->entry))
@@ -1447,7 +1447,7 @@ bool DungeonClearPullAction::Execute(Event /*event*/)
                         if (floorStage)
                         {
                             if (!DriveOnPackFloor(botAI, *floorStage, stand))
-                                StallDungeonClear(botAI, "Four Horsemen: waiting for a dry path to the Acolyte stand.");
+                                StallDungeonClear(botAI, std::string(floorStage->name) + ": waiting for a dry path to the stand.");
                             return true;
                         }
                         bool const walked =
@@ -1751,11 +1751,18 @@ bool DungeonClearPullAction::Execute(Event /*event*/)
 
             if (floorStage)
             {
+                if (floorStage->bossEntry == DcNaxx40LivingPoison::GrobbulusEntry)
+                {
+                    // Only the ranged leg to this stand was measured outside the boss patrol.
+                    DcMovement::StopBot(bot, DcMovement::Stop::Hold);
+                    StallDungeonClear(botAI, std::string(floorStage->name) + ": waiting for a ranged tag from the stand.");
+                    return true;
+                }
                 // A missing opener or expired cast still gets a normal body tag,
                 // but toward the live target along the verified floor, without
                 // letting the generic aggro-edge projection aim under it.
                 if (!DriveOnPackFloor(botAI, *floorStage, trash->GetPosition()))
-                    StallDungeonClear(botAI, "Four Horsemen: waiting for a dry walk-in to the Acolytes.");
+                    StallDungeonClear(botAI, std::string(floorStage->name) + ": waiting for a dry walk-in to the pack.");
                 return true;
             }
 
