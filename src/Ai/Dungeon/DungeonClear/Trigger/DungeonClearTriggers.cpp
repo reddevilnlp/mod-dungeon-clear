@@ -19,6 +19,7 @@
 #include "Creature.h"
 #include "CreatureAI.h"
 #include "Group.h"
+#include "InstanceScript.h"
 #include "Map.h"
 #include "ObjectAccessor.h"
 #include "ObjectMgr.h"
@@ -62,6 +63,7 @@
 #include "Ai/Dungeon/DungeonClear/Util/DungeonEventExecutor.h"
 #include "Ai/Dungeon/DungeonClear/Util/DungeonClearTuning.h"
 #include "Ai/Dungeon/DungeonClear/Util/DungeonClearUtil.h"
+#include "Ai/Raid/Naxx40/Naxx40Encounter.h"
 #include "Playerbots.h"
 #include "Ai/Dungeon/DungeonClear/DcValueKeys.h"
 #include "Util/DcPlayerbotsConfig.h"
@@ -980,6 +982,19 @@ bool DungeonClearAllClearedTrigger::IsActive()
     {
         rs.finalLootHoldSinceMs = 0;
         return false;
+    }
+
+    // At a wing kill the cached next boss can be empty before the final
+    // wing becomes selectable. Keep the run alive until Kel'Thuzad is done.
+    if (IsNaxx40Map(map))
+    {
+        constexpr uint32 KelThuzadEncounter = 14; // Individual Progression's instance slot
+        InstanceScript const* instance = owner->GetInstanceScript();
+        if (!instance || !instance->IsBossDone(KelThuzadEncounter))
+        {
+            rs.finalLootHoldSinceMs = 0;
+            return false;
+        }
     }
 
     // Everything is down — but the last boss's drop may not have been rolled yet.
