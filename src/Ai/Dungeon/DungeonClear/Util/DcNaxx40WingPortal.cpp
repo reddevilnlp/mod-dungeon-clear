@@ -49,6 +49,7 @@ namespace
     constexpr uint32 SapphironEntry = 351018;
     constexpr uint32 KelThuzadEntry = 351019;
     constexpr uint32 MaexxnaPortalEntry = 181575;
+    constexpr uint32 LoathebPortalEntry = 181577;
     constexpr uint32 HubTrigger = 4156;
     constexpr uint32 RetryDelayMs = 1500;
     constexpr uint32 ProgressLimitMs = 75000;
@@ -62,6 +63,12 @@ namespace
         {3477.333f, -3935.084f, 301.80f},
         {3465.753f, -3939.677f, 306.90f},
     }};
+    // The mesh smooths the height across the raised grate in Loatheb's room.
+    std::array<G3D::Vector3, 3> const LoathebApproach{{
+        {2909.000f, -3971.000f, 273.633f},
+        {2909.000f, -3997.400f, 274.155f},
+        {2909.000f, -4025.020f, 273.691f},
+    }};
 
     struct WingPortal
     {
@@ -70,12 +77,13 @@ namespace
         uint32 entry;
         std::array<uint32, 3> bosses;
         G3D::Vector3 floor;
+        std::array<G3D::Vector3, 3> const* surveyedApproach = nullptr;
     };
 
     // Individual Progression's GO data keys; the destinations below are dry floor within use range.
     std::array<WingPortal, 3> const WingPortals{{
-        {MaexxnaEncounter, 201, MaexxnaPortalEntry, {351009, 351007, 351006}, MaexxnaRamp.back()},
-        {LoathebEncounter, 200, 181577, {351008, 351005, 351020}, {2909.000f, -4025.020f, 273.691f}},
+        {MaexxnaEncounter, 201, MaexxnaPortalEntry, {351009, 351007, 351006}, MaexxnaRamp.back(), &MaexxnaRamp},
+        {LoathebEncounter, 200, LoathebPortalEntry, {351008, 351005, 351020}, LoathebApproach.back(), &LoathebApproach},
         {HorsemenEncounter, 203, 181578, {351036, 351035, 351037}, {2493.020f, -2921.780f, 241.440f}},
     }};
 
@@ -144,14 +152,14 @@ namespace
         return DcMovement::SplinePath(&ai, points, MovementPriority::MOVEMENT_NORMAL, FORCED_MOVEMENT_RUN);
     }
 
-    bool WalkMaexxnaRamp(PlayerbotAI& ai)
+    bool WalkSurveyedApproach(PlayerbotAI& ai, std::array<G3D::Vector3, 3> const& approach)
     {
         Player* bot = ai.GetBot();
-        G3D::Vector3 direction = MaexxnaRamp.back() - MaexxnaRamp.front();
+        G3D::Vector3 direction = approach.back() - approach.front();
         direction.z = 0.0f;
         direction /= direction.length();
         G3D::Vector3 const start = Location(*bot);
-        for (auto point = MaexxnaRamp.rbegin(); point != MaexxnaRamp.rend(); ++point)
+        for (auto point = approach.rbegin(); point != approach.rend(); ++point)
         {
             if ((*point - start).dot(direction) <= 0.65f)
                 continue;
@@ -160,7 +168,7 @@ namespace
             if (!path.empty())
                 return DcMovement::SplinePath(&ai, path, MovementPriority::MOVEMENT_NORMAL, FORCED_MOVEMENT_RUN);
         }
-        return (MaexxnaRamp.front() - start).dot(direction) > 0.65f && MoveDry(ai, MaexxnaRamp.front());
+        return (approach.front() - start).dot(direction) > 0.65f && MoveDry(ai, approach.front());
     }
 
     void UsePortal(Player& bot, GameObject const& go)
@@ -185,10 +193,10 @@ namespace
     }
 
     void DriveMember(PlayerbotAI& ai, Transit::Member& member, GameObject* go, G3D::Vector3 const& destination,
-                     uint32 portalEntry, bool mayUse, uint32 now)
+                     WingPortal const* wing, bool mayUse, uint32 now)
     {
         Player& bot = *ai.GetBot();
-        bool const hub = portalEntry == HubTrigger;
+        bool const hub = !wing;
         auto const& spline = *bot.movespline;
         if (!bot.IsAlive() || bot.IsInCombat() || bot.IsBeingTeleported() || bot.IsFalling() || !ai.CanMove() ||
             !Near(bot, destination, hub ? 45.0f : 110.0f) ||
@@ -214,7 +222,8 @@ namespace
                 UsePortal(bot, *go);
             return;
         }
-        if (portalEntry == MaexxnaPortalEntry ? WalkMaexxnaRamp(ai) : MoveDry(ai, destination))
+        auto const* approach = wing ? wing->surveyedApproach : nullptr;
+        if (approach ? WalkSurveyedApproach(ai, *approach) : MoveDry(ai, destination))
             member.spline = spline.GetId();
     }
 
@@ -276,7 +285,7 @@ namespace
             if (bot == &owner)
                 ownerMember = &member;
             else if (ready)
-                DriveMember(*memberAI, member, go, destination, transfer.portalEntry, true, now);
+                DriveMember(*memberAI, member, go, destination, wing, true, now);
         }
 
         if (arrived == transfer.members.size())
@@ -289,7 +298,7 @@ namespace
         }
 
         if (ready && ownerMember)
-            DriveMember(ai, *ownerMember, go, destination, transfer.portalEntry, arrived + 1 == transfer.members.size(), now);
+            DriveMember(ai, *ownerMember, go, destination, wing, arrived + 1 == transfer.members.size(), now);
 
         if (ready && now - transfer.lastProgress >= ProgressLimitMs)
         {
