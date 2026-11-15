@@ -35,6 +35,8 @@
 
 #include <algorithm>
 #include <array>
+#include <limits>
+#include <span>
 
 namespace DcNaxx40WingPortal
 {
@@ -50,13 +52,16 @@ namespace
     constexpr uint32 KelThuzadEntry = 351019;
     constexpr uint32 MaexxnaPortalEntry = 181575;
     constexpr uint32 LoathebPortalEntry = 181577;
+    constexpr uint32 HorsemenPortalEntry = 181578;
     constexpr uint32 HubTrigger = 4156;
     constexpr uint32 RetryDelayMs = 1500;
     constexpr uint32 ProgressLimitMs = 75000;
+    constexpr float WingWalkRadius = 110.0f;
 
     G3D::Vector3 const HubLanding{3005.51f, -3434.64f, 304.195f};
     G3D::Vector3 const HubTriggerCenter{3006.090f, -3434.170f, 306.195f};
     G3D::Vector3 const FrostwyrmLanding{3498.300f, -5349.490f, 144.968f};
+    G3D::Vector3 const HorsemenPortalFloor{2493.020f, -2921.780f, 241.440f};
     // The ramp climbs mostly after the floor turns. A single straight Detour leg loses this grade.
     std::array<G3D::Vector3, 3> const MaexxnaRamp{{
         {3498.667f, -3926.623f, 299.38f},
@@ -68,6 +73,33 @@ namespace
         {2909.000f, -3971.000f, 273.633f},
         {2909.000f, -3997.400f, 274.155f},
         {2909.000f, -4025.020f, 273.691f},
+    }};
+
+    // Detour can smooth a straight leg across the central dais even when the
+    // endpoints are on the lower floor. Keep these surveyed legs on its skirts.
+    std::array<G3D::Vector3, 6> const HorsemenWest{{
+        {2519.000f, -2995.000f, 241.290f},
+        {2501.500f, -2986.500f, 241.285f},
+        {2484.000f, -2978.000f, 241.280f},
+        {2488.500f, -2958.250f, 241.280f},
+        {2490.760f, -2940.015f, 241.360f},
+        HorsemenPortalFloor,
+    }};
+    std::array<G3D::Vector3, 8> const HorsemenEast{{
+        {2576.250f, -2955.500f, 241.310f},
+        {2561.000f, -2947.000f, 241.280f},
+        {2555.500f, -2930.500f, 241.280f},
+        {2550.000f, -2914.000f, 241.280f},
+        {2536.800f, -2896.600f, 241.280f},
+        {2517.800f, -2896.600f, 241.280f},
+        {2505.410f, -2909.190f, 241.360f},
+        HorsemenPortalFloor,
+    }};
+    std::array<G3D::Vector3, 4> const HorsemenCenter{{
+        {2535.000f, -2941.000f, 241.480f},
+        {2525.000f, -2921.000f, 241.277f},
+        {2515.000f, -2916.000f, 241.277f},
+        HorsemenPortalFloor,
     }};
 
     struct WingPortal
@@ -84,7 +116,7 @@ namespace
     std::array<WingPortal, 3> const WingPortals{{
         {MaexxnaEncounter, 201, MaexxnaPortalEntry, {351009, 351007, 351006}, MaexxnaRamp.back(), &MaexxnaRamp},
         {LoathebEncounter, 200, LoathebPortalEntry, {351008, 351005, 351020}, LoathebApproach.back(), &LoathebApproach},
-        {HorsemenEncounter, 203, 181578, {351036, 351035, 351037}, {2493.020f, -2921.780f, 241.440f}},
+        {HorsemenEncounter, 203, HorsemenPortalEntry, {351036, 351035, 351037}, HorsemenPortalFloor},
     }};
 
     G3D::Vector3 Location(Player const& player)
@@ -95,6 +127,14 @@ namespace
     bool Near(Player const& player, G3D::Vector3 const& point, float radius)
     {
         return (Location(player) - point).squaredLength() <= radius * radius;
+    }
+
+    bool InHorsemenRoom(Player const& player)
+    {
+        G3D::Vector3 const point = Location(player);
+        // The room gate is at Y -3017.17. Do not arm from the outer corridor.
+        return point.x >= 2450.0f && point.x <= 2630.0f && point.y >= -3016.0f && point.y <= -2880.0f &&
+            point.z >= 239.0f && point.z <= 248.0f;
     }
 
     bool WingsDone(InstanceScript const& instance)
@@ -127,7 +167,8 @@ namespace
     uint32 ChoosePortal(Player const& owner, InstanceScript const& instance, uint32 nextBoss)
     {
         for (auto const& wing : WingPortals)
-            if (instance.IsBossDone(wing.encounter) && Near(owner, wing.floor, 75.0f) &&
+            if (instance.IsBossDone(wing.encounter) && (Near(owner, wing.floor, 75.0f) ||
+                (wing.entry == HorsemenPortalEntry && InHorsemenRoom(owner) && Near(owner, wing.floor, WingWalkRadius))) &&
                 std::ranges::find(wing.bosses, nextBoss) == wing.bosses.end())
                 return wing.entry;
 
@@ -171,6 +212,45 @@ namespace
         return (approach.front() - start).dot(direction) > 0.65f && MoveDry(ai, approach.front());
     }
 
+    bool WalkHorsemenApproach(PlayerbotAI& ai)
+    {
+        Player* bot = ai.GetBot();
+        if (!InHorsemenRoom(*bot))
+            return false;
+
+        std::array<std::span<G3D::Vector3 const>, 3> const routes{HorsemenWest, HorsemenEast, HorsemenCenter};
+        G3D::Vector3 const start = Location(*bot);
+        Movement::PointsArray bestPath;
+        float bestLength = std::numeric_limits<float>::max();
+        for (auto const route : routes)
+        {
+            float remaining = 0.0f;
+            for (std::size_t index = route.size(); index-- > 0;)
+            {
+                if (index + 1 < route.size())
+                    remaining += (route[index + 1] - route[index]).length();
+                float const approach = (route[index] - start).length();
+                float const length = approach + remaining;
+                if (approach <= 0.65f || length >= bestLength)
+                    continue;
+
+                auto path = DcNaxx40SlimeCrossing::BuildSurveyedDryLeg(bot, route[index]);
+                if (!path.empty())
+                {
+                    bestLength = length;
+                    bestPath = std::move(path);
+                }
+            }
+        }
+        if (bestPath.empty() || !DcMovement::SplinePath(&ai, bestPath, MovementPriority::MOVEMENT_NORMAL, FORCED_MOVEMENT_RUN))
+            return false;
+
+        G3D::Vector3 const& end = bestPath.back();
+        LOG_DEBUG("playerbots.dungeonclear", "[DC:{}] Naxx40 Horsemen portal skirt -> ({:.2f},{:.2f},{:.2f})",
+            bot->GetName(), end.x, end.y, end.z);
+        return true;
+    }
+
     void UsePortal(Player& bot, GameObject const& go)
     {
         if (go.GetGoState() != GO_STATE_ACTIVE || go.HasGameObjectFlag(GO_FLAG_NOT_SELECTABLE))
@@ -193,13 +273,13 @@ namespace
     }
 
     void DriveMember(PlayerbotAI& ai, Transit::Member& member, GameObject* go, G3D::Vector3 const& destination,
-                     WingPortal const* wing, bool mayUse, uint32 now)
+                     WingPortal const* wing, bool horsemenFallback, bool mayUse, uint32 now)
     {
         Player& bot = *ai.GetBot();
         bool const hub = !wing;
         auto const& spline = *bot.movespline;
         if (!bot.IsAlive() || bot.IsInCombat() || bot.IsBeingTeleported() || bot.IsFalling() || !ai.CanMove() ||
-            !Near(bot, destination, hub ? 45.0f : 110.0f) ||
+            !Near(bot, destination, hub ? 45.0f : WingWalkRadius) ||
             (member.spline && !spline.Finalized() && spline.GetId() == member.spline) ||
             now - member.lastAttempt < RetryDelayMs)
             return;
@@ -223,7 +303,8 @@ namespace
             return;
         }
         auto const* approach = wing ? wing->surveyedApproach : nullptr;
-        if (approach ? WalkSurveyedApproach(ai, *approach) : MoveDry(ai, destination))
+        if (approach ? WalkSurveyedApproach(ai, *approach) :
+            MoveDry(ai, destination) || (horsemenFallback && WalkHorsemenApproach(ai)))
             member.spline = spline.GetId();
     }
 
@@ -254,6 +335,7 @@ namespace
         bool const available = hub ? allWingsDone : instance.IsBossDone(wing->encounter);
         bool const ready = available && !instance.IsEncounterInProgress() &&
             !DcCombatFlag::AnyPartyEngagement(&owner) && !DcRezRecovery::IsPending(&owner);
+        bool const horsemenFallback = wing && wing->entry == HorsemenPortalEntry && InHorsemenRoom(owner);
         G3D::Vector3 const& destination = hub ? HubLanding : wing->floor;
         unsigned arrived = 0;
         unsigned inUseRange = 0;
@@ -285,7 +367,7 @@ namespace
             if (bot == &owner)
                 ownerMember = &member;
             else if (ready)
-                DriveMember(*memberAI, member, go, destination, wing, true, now);
+                DriveMember(*memberAI, member, go, destination, wing, horsemenFallback, true, now);
         }
 
         if (arrived == transfer.members.size())
@@ -298,7 +380,7 @@ namespace
         }
 
         if (ready && ownerMember)
-            DriveMember(ai, *ownerMember, go, destination, wing, arrived + 1 == transfer.members.size(), now);
+            DriveMember(ai, *ownerMember, go, destination, wing, horsemenFallback, arrived + 1 == transfer.members.size(), now);
 
         if (ready && now - transfer.lastProgress >= ProgressLimitMs)
         {
