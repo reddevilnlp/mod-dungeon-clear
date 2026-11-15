@@ -72,6 +72,7 @@
 #include "Ai/Dungeon/DungeonClear/Util/DcNaxx40GluthTransit.h"
 #include "Ai/Dungeon/DungeonClear/Util/DcNaxx40Gothik.h"
 #include "Ai/Dungeon/DungeonClear/Util/DcNaxx40Horsemen.h"
+#include "Ai/Dungeon/DungeonClear/Util/DcNaxx40KelThuzad.h"
 #include "Ai/Dungeon/DungeonClear/Util/DcNaxx40Razuvious.h"
 #include "Ai/Dungeon/DungeonClear/Util/DcNaxx40Thaddius.h"
 #include "Ai/Dungeon/DungeonClear/Util/DcNaxx40LivingPoison.h"
@@ -1011,6 +1012,8 @@ bool DungeonClearEngageBossAction::Execute(Event event)
 
     bool const horsemenOpening = DcNaxx40Horsemen::IsObjective(bot, next->entry);
     if (horsemenOpening && (!DcNaxx40Horsemen::Ready(*botAI) || DcRezRecovery::IsPending(bot)))
+        return false;
+    if (DcNaxx40KelThuzad::IsObjective(bot, next->entry))
         return false;
 
     bool const razuviousOpening = DcNaxx40Razuvious::UsesOpening(botAI, next->entry);

@@ -16,6 +16,7 @@
 AC_ADD_SCRIPT("${CMAKE_CURRENT_LIST_DIR}/src")
 
 # New files added: Util/DcNaxx40Horsemen.{h,cpp} (Four Horsemen opening).
+# New files added: Util/DcNaxx40KelThuzad.{h,cpp} (Kel'Thuzad antechamber).
 
 # New files added: Data/HealLeashRegistry.{h,cpp}
 #   (per-map camp leash for the healer LOS reposition — Karazhan's Banquet Hall,

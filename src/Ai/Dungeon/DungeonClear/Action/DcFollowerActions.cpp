@@ -44,6 +44,7 @@
 #include "Ai/Dungeon/DungeonClear/Data/Events/DungeonEventTables.h"
 #include "Ai/Dungeon/DungeonClear/Util/DcEngageGeometry.h"
 #include "Ai/Dungeon/DungeonClear/Util/DcHazard.h"
+#include "Ai/Dungeon/DungeonClear/Util/DcNaxx40KelThuzad.h"
 #include "Ai/Dungeon/DungeonClear/Util/DcPlayerbotCompat.h"
 #include "Ai/Dungeon/DungeonClear/Util/DungeonClearApproach.h"
 #include "Ai/Dungeon/DungeonClear/Util/DungeonClearMath.h"
@@ -390,6 +391,13 @@ bool DungeonClearFollowTankAction::Execute(Event /*event*/)
                   "[DC:{}] follow-tank: standing down, the transit owns the column",
                   bot->GetName());
         return false;
+    }
+
+    if (auto const staged = DcNaxx40KelThuzad::StageFollower(*botAI, tank))
+    {
+        followedTank = tank->GetGUID();
+        DcFollowerLifecycle::MarkFollowing(bot->GetGUID());
+        return *staged;
     }
 
     // BLACKROCK DEPTHS' IRON HALL: a follower parked clear of the fire in the stop
