@@ -70,6 +70,7 @@
 #include "Ai/Dungeon/DungeonClear/Util/DcTargeting.h"
 #include "Ai/Dungeon/DungeonClear/Util/DcTickMemo.h"
 #include "Ai/Dungeon/DungeonClear/Util/DcNaxx40GluthTransit.h"
+#include "Ai/Dungeon/DungeonClear/Util/DcNaxx40Razuvious.h"
 #include "Ai/Dungeon/DungeonClear/Util/DcNaxx40Thaddius.h"
 #include "Ai/Dungeon/DungeonClear/Util/DcNaxx40LivingPoison.h"
 #include "Ai/Dungeon/DungeonClear/Util/DcNaxx40Patchwerk.h"
@@ -1006,6 +1007,10 @@ bool DungeonClearEngageBossAction::Execute(Event event)
     if (next->kind != DungeonAnchorKind::Boss)
         return false;
 
+    bool const razuviousOpening = DcNaxx40Razuvious::UsesOpening(botAI, next->entry);
+    if (razuviousOpening && !DcNaxx40Razuvious::AtCamp(*bot))
+        return false;
+
     Creature* boss = DcTargeting::GetLiveBoss(bot, context, next->entry);
     if (!boss)
     {
@@ -1067,6 +1072,9 @@ bool DungeonClearEngageBossAction::Execute(Event event)
             return true;
         }
     }
+
+    if (razuviousOpening && DcNaxx40Razuvious::Open(botAI, *boss))
+        return true;
 
     if (DcNaxx40Patchwerk::UsesPatrolCamp(bot, context, next->entry))
     {

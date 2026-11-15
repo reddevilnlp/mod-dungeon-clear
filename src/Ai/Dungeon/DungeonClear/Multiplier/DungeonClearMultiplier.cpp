@@ -27,6 +27,7 @@
 #include "Ai/Dungeon/DungeonClear/Util/DcNaxx40Embalming.h"
 #include "Ai/Dungeon/DungeonClear/Util/DcNaxx40GluthTransit.h"
 #include "Ai/Dungeon/DungeonClear/Util/DcNaxx40LoathebTransit.h"
+#include "Ai/Dungeon/DungeonClear/Util/DcNaxx40Razuvious.h"
 #include "Ai/Dungeon/DungeonClear/Util/DcNaxx40Thaddius.h"
 #include "Ai/Dungeon/DungeonClear/Util/DcNaxx40WingPortal.h"
 #include "Ai/Dungeon/DungeonClear/Util/DcNaxx40LivingPoison.h"
@@ -125,6 +126,13 @@ static bool InterruptsGluthTransit(PlayerbotAI* ai, Player* bot, Action* action,
         return DcNaxx40GluthTransit::InGasTransit(ai);
     return (dynamic_cast<MovementAction*>(action) || dynamic_cast<CastReachTargetSpellAction*>(action) ||
             name == "open loot" || name == "loot") && DcNaxx40GluthTransit::OwnsMovement(ai);
+}
+
+static bool MovesDuringRazuviousOpening(PlayerbotAI* ai, Action* action, std::string const& name)
+{
+    return name != "avoid aoe" &&
+        (dynamic_cast<MovementAction*>(action) || dynamic_cast<CastReachTargetSpellAction*>(action)) &&
+        DcNaxx40Razuvious::HoldsPosition(ai);
 }
 
 static bool InterruptsLoathebTransit(PlayerbotAI* ai, Action* action, std::string const& name)
@@ -383,7 +391,8 @@ float DungeonClearMultiplier::GetValue(Action* action)
         DcNaxx40Thaddius::InExitTransition(botAI))
         return 0.0f;
 
-    if ((bot->GetMapId() == 533 && InterruptsLoathebTransit(botAI, action, name)) ||
+    if ((bot->GetMapId() == 533 && (InterruptsLoathebTransit(botAI, action, name) ||
+         MovesDuringRazuviousOpening(botAI, action, name))) ||
         InterruptsGluthTransit(botAI, bot, action, name) ||
         LeavesEmbalmingCamp(botAI, bot, action, name) || LeavesPatchwerkPosition(botAI, bot, action, name) ||
         (bot->GetMapId() == 533 && InterruptsSlimeEscape(*botAI, action, name)))
@@ -625,7 +634,8 @@ float DungeonClearCombatMultiplier::GetValue(Action* action)
 
     std::string const& name = action->getName();
 
-    if ((bot->GetMapId() == 533 && InterruptsLoathebTransit(botAI, action, name)) ||
+    if ((bot->GetMapId() == 533 && (InterruptsLoathebTransit(botAI, action, name) ||
+         MovesDuringRazuviousOpening(botAI, action, name))) ||
         InterruptsGluthTransit(botAI, bot, action, name) ||
         LeavesEmbalmingCamp(botAI, bot, action, name) || LeavesPatchwerkPosition(botAI, bot, action, name) ||
         (bot->GetMapId() == 533 && InterruptsSlimeEscape(*botAI, action, name)))

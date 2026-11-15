@@ -40,6 +40,7 @@
 #include "Ai/Dungeon/DungeonClear/Data/DcHazardRegistry.h"
 #include "Ai/Dungeon/DungeonClear/Util/DcNaxx40Embalming.h"
 #include "Ai/Dungeon/DungeonClear/Util/DcNaxx40GluthTransit.h"
+#include "Ai/Dungeon/DungeonClear/Util/DcNaxx40Razuvious.h"
 #include "Ai/Dungeon/DungeonClear/Util/DcNaxx40Thaddius.h"
 #include "Ai/Dungeon/DungeonClear/Util/DcNaxx40LivingPoison.h"
 #include "Ai/Dungeon/DungeonClear/Util/DcNaxx40Patchwerk.h"
@@ -285,6 +286,9 @@ bool DungeonClearAtBossTrigger::IsActive()
 
     // Close enough AND on the boss's own floor (not just 3D-near while passing
     // under an upper-floor boss). See IsAtBossEngage.
+    if (DcNaxx40Razuvious::UsesOpening(botAI, next->entry))
+        return DcNaxx40Razuvious::AtCamp(*bot) && !DcRezRecovery::IsPending(bot) &&
+            !DcRaidMuster::Holds(bot, botAI, context, *next);
     if (DcNaxx40Patchwerk::UsesPatrolCamp(bot, context, next->entry))
     {
         if (!DcNaxx40Patchwerk::AtPatrolCamp(bot, context) || DcRezRecovery::IsPending(bot))

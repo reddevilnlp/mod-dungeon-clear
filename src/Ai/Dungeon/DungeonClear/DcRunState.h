@@ -154,6 +154,16 @@ struct DcRunState
     uint32 naxx40LoathebSpline = 0;
     bool naxx40LoathebArrived = false;
 
+    struct RazuviousOpening
+    {
+        ObjectGuid priest;
+        ObjectGuid boss;
+        uint32 started = 0;
+        uint32 committed = 0;
+        uint32 stageBlocked = 0;
+        bool useNormalPull = false;
+    } naxx40RazuviousOpening;
+
     struct ThaddiusOpening
     {
         enum class Phase { Camp, Platforms, Pull };
