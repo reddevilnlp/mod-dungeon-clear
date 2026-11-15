@@ -320,9 +320,9 @@ bool CrossingActive(Player* bot)
     return ai && IsNaxx40SlimeCrossingAuthorized(*ai);
 }
 
-bool IsDryCampGround(Player const& bot, G3D::Vector3 const& point)
+bool IsDryCampGround(Player const& bot, G3D::Vector3 const& point, float floorProbeLift)
 {
-    return CheckSurface(bot, point, true) == Surface::Dry;
+    return CheckSurface(bot, point, true, floorProbeLift) == Surface::Dry;
 }
 
 Movement::PointsArray BuildSurveyedDryLeg(Player* bot, G3D::Vector3 const& end)

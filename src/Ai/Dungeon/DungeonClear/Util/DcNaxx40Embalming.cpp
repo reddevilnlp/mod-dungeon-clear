@@ -35,6 +35,7 @@ namespace
     constexpr uint32 EmbalmingSlime = 351026;
     constexpr float CloudMargin = 11.0f;
     constexpr float RangeMargin = 0.75f;
+    constexpr float SurveyedFloorProbeLift = 0.25f;
     Position const SouthCamp(3137.1f, -3268.5f, 294.374f);
     Position const SouthRetreat(3152.0f, -3270.0f, 294.559f);
     Position const ForwardCamp(3133.0f, -3257.0f, 294.504f);
@@ -61,8 +62,11 @@ namespace
 
         G3D::Vector3 const leg = end - start;
         int const samples = std::max(1, static_cast<int>(std::ceil(leg.length() / 0.5f)));
+        // The straight retreat interpolates under shallow rises in the surveyed dry floor.
+        // Probe slightly higher to identify that same floor, keeping the liquid check on it.
         for (int i = 0; i <= samples; ++i)
-            if (!DcNaxx40SlimeCrossing::IsDryCampGround(tank, start + leg * (static_cast<float>(i) / samples)))
+            if (!DcNaxx40SlimeCrossing::IsDryCampGround(
+                    tank, start + leg * (static_cast<float>(i) / samples), SurveyedFloorProbeLift))
                 return {};
         return {start, start + leg * 0.5f, end};
     }

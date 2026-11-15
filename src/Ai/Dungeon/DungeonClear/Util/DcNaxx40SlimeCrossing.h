@@ -34,7 +34,7 @@ namespace DcNaxx40SlimeCrossing
     inline G3D::Vector3 const GrobbulusBankA{3317.6309f, -3241.0579f, 294.0635f};
     inline G3D::Vector3 const GrobbulusBankB{3318.1392f, -3255.6616f, 293.78555f};
     bool TryGrobbulusCrossing(PlayerbotAI* ai);
-    bool IsDryCampGround(Player const& bot, G3D::Vector3 const& point);
+    bool IsDryCampGround(Player const& bot, G3D::Vector3 const& point, float floorProbeLift = 0.0f);
     Movement::PointsArray BuildSurveyedDryLeg(Player* bot, G3D::Vector3 const& end);
     Movement::PointsArray BuildDryCampPath(Player* bot, Position const& destination);
 
