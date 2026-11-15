@@ -14,6 +14,7 @@
 #include "Ai/Dungeon/DungeonClear/Util/DcCombatFlag.h"
 #include "Ai/Dungeon/DungeonClear/Util/DcLeaderSignal.h"
 #include "Ai/Dungeon/DungeonClear/Util/DcNaxx40GluthTransit.h"
+#include "Ai/Dungeon/DungeonClear/Util/DcNaxx40Horsemen.h"
 #include "Ai/Dungeon/DungeonClear/Util/DcPartyState.h"
 #include "Ai/Dungeon/DungeonClear/Util/DcPlayerbotCompat.h"
 #include "Ai/Dungeon/DungeonClear/Util/DcPullPlanner.h"
@@ -221,7 +222,8 @@ namespace DcStrandedRecovery
         // A pause is an intentional hold, not a stall: keep the clock fresh so a
         // long Wait-at-Boss / door pause never makes the run look frozen on resume.
         if (run.paused || (naxx40 && (LivingPoisonControlsRun(*driver.anchor, run) ||
-                                     GluthTransitControlsRun(driver.runOwner, leaderAI))))
+                                     GluthTransitControlsRun(driver.runOwner, leaderAI) ||
+                                     DcNaxx40Horsemen::OwnsMovement(*leaderAI))))
         {
             DcRunProgress::Stamp(run.progress, now);
             return false;
@@ -310,6 +312,7 @@ namespace DcStrandedRecovery
         DcRunState& run = DcRun::Of(leaderAI);
         if (naxx40 && (run.paused || LivingPoisonControlsRun(*leader, run) ||
                        GluthTransitControlsRun(driver.runOwner, leaderAI) ||
+                       DcNaxx40Horsemen::OwnsMovement(*leaderAI) ||
                        !GetNaxx40Landing(*leader, *leader, lx, ly)))
             return;
 

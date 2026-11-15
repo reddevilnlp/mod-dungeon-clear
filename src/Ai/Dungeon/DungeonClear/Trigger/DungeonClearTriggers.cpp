@@ -41,6 +41,7 @@
 #include "Ai/Dungeon/DungeonClear/Util/DcNaxx40Embalming.h"
 #include "Ai/Dungeon/DungeonClear/Util/DcNaxx40GluthTransit.h"
 #include "Ai/Dungeon/DungeonClear/Util/DcNaxx40Gothik.h"
+#include "Ai/Dungeon/DungeonClear/Util/DcNaxx40Horsemen.h"
 #include "Ai/Dungeon/DungeonClear/Util/DcNaxx40Razuvious.h"
 #include "Ai/Dungeon/DungeonClear/Util/DcNaxx40Thaddius.h"
 #include "Ai/Dungeon/DungeonClear/Util/DcNaxx40LivingPoison.h"
@@ -287,6 +288,8 @@ bool DungeonClearAtBossTrigger::IsActive()
 
     // Close enough AND on the boss's own floor (not just 3D-near while passing
     // under an upper-floor boss). See IsAtBossEngage.
+    if (DcNaxx40Horsemen::IsObjective(bot, next->entry))
+        return DcNaxx40Horsemen::Ready(*botAI) && !DcRezRecovery::IsPending(bot);
     if (DcNaxx40Razuvious::UsesOpening(botAI, next->entry))
         return DcNaxx40Razuvious::AtCamp(*bot) && !DcRezRecovery::IsPending(bot) &&
             !DcRaidMuster::Holds(bot, botAI, context, *next);

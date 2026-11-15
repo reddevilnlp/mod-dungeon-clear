@@ -26,6 +26,7 @@
 #include "Ai/Dungeon/DungeonClear/Util/DcLyceumCloseUpDecision.h"
 #include "Ai/Dungeon/DungeonClear/Util/DcNaxx40Embalming.h"
 #include "Ai/Dungeon/DungeonClear/Util/DcNaxx40GluthTransit.h"
+#include "Ai/Dungeon/DungeonClear/Util/DcNaxx40Horsemen.h"
 #include "Ai/Dungeon/DungeonClear/Util/DcNaxx40LoathebTransit.h"
 #include "Ai/Dungeon/DungeonClear/Util/DcNaxx40Razuvious.h"
 #include "Ai/Dungeon/DungeonClear/Util/DcNaxx40Thaddius.h"
@@ -402,6 +403,13 @@ float DungeonClearMultiplier::GetValue(Action* action)
         (dynamic_cast<MovementAction*>(action) || dynamic_cast<CastReachTargetSpellAction*>(action) ||
          name == "open loot" || name == "loot" || name == "dungeon clear pull" ||
          name == "dungeon clear recover stranded") && DcNaxx40Thaddius::OwnsMovement(botAI))
+        return 0.0f;
+
+    if (bot->GetMapId() == 533 && name != "dungeon clear advance" &&
+        (dynamic_cast<MovementAction*>(action) || dynamic_cast<CastReachTargetSpellAction*>(action) ||
+         name == "open loot" || name == "loot" || name == "dungeon clear recover stranded") &&
+        DcNaxx40Horsemen::OwnsMovement(*botAI) &&
+        (name != "dungeon clear engage boss" || !DcNaxx40Horsemen::Ready(*botAI)))
         return 0.0f;
 
     if (!dynamic_cast<ReachPartyMemberToResurrectAction*>(action) &&

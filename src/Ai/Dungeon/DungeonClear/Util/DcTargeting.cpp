@@ -11,6 +11,7 @@
 #include "DcDoorIndex.h"
 #include "DungeonClearMath.h"
 #include "DungeonClearTuning.h"
+#include "DcNaxx40Horsemen.h"
 #include "Ai/Dungeon/DungeonClear/Settings/DcSettings.h"
 #include <algorithm>
 #include <cmath>
@@ -228,6 +229,8 @@ namespace
             if (!u || !u->IsAlive())
                 continue;
             if (!bot->IsHostileTo(u))
+                continue;
+            if (DcNaxx40Horsemen::IsEncounterMob(*bot, u->GetEntry()))
                 continue;
             // A body on the floor is not a blocker: it never notices us and never
             // fights, so walking over to melee it is pure detour. See
@@ -495,6 +498,8 @@ Unit* DcTargeting::FindBlockingTrash(Player* bot,
         if (!u || !u->IsAlive())
             continue;
         if (!bot->IsHostileTo(u))
+            continue;
+        if (DcNaxx40Horsemen::IsEncounterMob(*bot, u->GetEntry()))
             continue;
         // …but DO skip a unit displayed as a corpse: it cannot be the thing
         // clawing at the healer. See DcEngageGeometry::IsDisplayedDead.

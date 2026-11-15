@@ -71,6 +71,7 @@
 #include "Ai/Dungeon/DungeonClear/Util/DcTickMemo.h"
 #include "Ai/Dungeon/DungeonClear/Util/DcNaxx40GluthTransit.h"
 #include "Ai/Dungeon/DungeonClear/Util/DcNaxx40Gothik.h"
+#include "Ai/Dungeon/DungeonClear/Util/DcNaxx40Horsemen.h"
 #include "Ai/Dungeon/DungeonClear/Util/DcNaxx40Razuvious.h"
 #include "Ai/Dungeon/DungeonClear/Util/DcNaxx40Thaddius.h"
 #include "Ai/Dungeon/DungeonClear/Util/DcNaxx40LivingPoison.h"
@@ -1008,6 +1009,10 @@ bool DungeonClearEngageBossAction::Execute(Event event)
     if (next->kind != DungeonAnchorKind::Boss)
         return false;
 
+    bool const horsemenOpening = DcNaxx40Horsemen::IsObjective(bot, next->entry);
+    if (horsemenOpening && (!DcNaxx40Horsemen::Ready(*botAI) || DcRezRecovery::IsPending(bot)))
+        return false;
+
     bool const razuviousOpening = DcNaxx40Razuvious::UsesOpening(botAI, next->entry);
     if (razuviousOpening && !DcNaxx40Razuvious::AtCamp(*bot))
         return false;
@@ -1015,7 +1020,8 @@ bool DungeonClearEngageBossAction::Execute(Event event)
     if (gothikRangedPull && !DcNaxx40Gothik::AtPullPoint(*bot))
         return false;
 
-    Creature* boss = DcTargeting::GetLiveBoss(bot, context, next->entry);
+    Creature* boss = DcTargeting::GetLiveBoss(bot, context,
+        horsemenOpening ? DcNaxx40Horsemen::KorthazzEntry : next->entry);
     if (!boss)
     {
         // A boss a pending event must SUMMON (RFD's gong -> Tuten'kash) isn't on
@@ -1033,7 +1039,7 @@ bool DungeonClearEngageBossAction::Execute(Event event)
     // Wait-at-Boss so a human's resume finds the raid already staged and
     // buffed. Holds the tick (Soft stop keeps the tank parked at the standoff)
     // until the muster kernel reads Ready.
-    if (DcRaidMuster::Holds(bot, botAI, context, *next))
+    if (!horsemenOpening && DcRaidMuster::Holds(bot, botAI, context, *next))
     {
         DcMovement::StopBot(bot, DcMovement::Stop::Soft);
         return true;
@@ -1075,6 +1081,14 @@ bool DungeonClearEngageBossAction::Execute(Event event)
             botAI->DoSpecificAction("dc status", event, true);
             return true;
         }
+    }
+
+    if (horsemenOpening)
+    {
+        if (!DcNaxx40Horsemen::ConfirmReady(*botAI))
+            return false;
+        if (auto const ranged = DcNaxx40Horsemen::TryRangedPull(*botAI, *boss))
+            return *ranged;
     }
 
     if (razuviousOpening && DcNaxx40Razuvious::Open(botAI, *boss))

@@ -52,6 +52,7 @@
 #include "Ai/Dungeon/DungeonClear/Util/DcNaxx40SlimeCrossing.h"
 #include "Ai/Dungeon/DungeonClear/Util/DcNaxx40GluthTransit.h"
 #include "Ai/Dungeon/DungeonClear/Util/DcNaxx40Gothik.h"
+#include "Ai/Dungeon/DungeonClear/Util/DcNaxx40Horsemen.h"
 #include "Ai/Dungeon/DungeonClear/Util/DcNaxx40Razuvious.h"
 #include "Ai/Dungeon/DungeonClear/Util/DcNaxx40Thaddius.h"
 #include "Ai/Dungeon/DungeonClear/Util/DcNaxx40WingPortal.h"
@@ -2330,6 +2331,9 @@ bool DungeonClearAdvanceAction::Execute(Event event)
     // cutoffs clear the corpse and reopen the pull.
     if (Step s = TryLootYield(st); s != Step::Continue)
         return s == Step::ReturnTrue;
+
+    if (auto const staged = DcNaxx40Horsemen::Stage(*botAI, *next))
+        return *staged;
 
     if (DcNaxx40Thaddius::BeginExit(botAI) || DcNaxx40WingPortal::Begin(botAI, next->entry))
         return true;
