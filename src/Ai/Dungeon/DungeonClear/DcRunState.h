@@ -179,6 +179,12 @@ struct DcRunState
     uint32 naxx40ThaddiusSpline = 0;
     uint32 naxx40ThaddiusLastMove = 0;
 
+    struct ThaddiusPortalCredit
+    {
+        ObjectGuid group;
+        uint32 instanceId = 0;
+    } naxx40ThaddiusPortalCredit;
+
     struct ThaddiusExit
     {
         struct Member

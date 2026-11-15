@@ -8,6 +8,7 @@
 #include "Ai/Dungeon/DungeonClear/DcValueKeys.h"
 #include "Ai/Dungeon/DungeonClear/DcApproachState.h"
 #include "Ai/Raid/Naxx40/Naxx40Encounter.h"
+#include "Ai/Raid/Naxx40/Thaddius40.h"
 #include "AllMapScript.h"
 #include "ChunkedPathfinder.h"
 #include "DcCombatFlag.h"
@@ -15,6 +16,7 @@
 #include "DcModuleEnable.h"
 #include "DcMovement.h"
 #include "DcNaxx40SlimeCrossing.h"
+#include "DcNaxx40Thaddius.h"
 #include "DcPlayerbotCompat.h"
 #include "DcRezRecovery.h"
 #include "DcRun.h"
@@ -48,11 +50,11 @@ namespace
 
     constexpr uint32 LoathebEncounter = 5;
     constexpr uint32 MaexxnaEncounter = 8;
-    constexpr uint32 ThaddiusEncounter = 9;
     constexpr uint32 HorsemenEncounter = 12;
     constexpr uint32 SapphironEntry = 351018;
     constexpr uint32 KelThuzadEntry = 351019;
     constexpr uint32 MaexxnaPortalEntry = 181575;
+    constexpr uint32 ThaddiusPortalEntry = 181576;
     constexpr uint32 LoathebPortalEntry = 181577;
     constexpr uint32 HorsemenPortalEntry = 181578;
     constexpr uint32 HubTrigger = 4156;
@@ -63,6 +65,7 @@ namespace
     G3D::Vector3 const HubLanding{3005.51f, -3434.64f, 304.195f};
     G3D::Vector3 const HubTriggerCenter{3006.090f, -3434.170f, 306.195f};
     G3D::Vector3 const FrostwyrmLanding{3498.300f, -5349.490f, 144.968f};
+    G3D::Vector3 const ThaddiusPortalFloor{3539.020f, -2936.820f, 302.571f};
     G3D::Vector3 const HorsemenPortalFloor{2493.020f, -2921.780f, 241.440f};
     // The ramp climbs mostly after the floor turns. A single straight Detour leg loses this grade.
     std::array<G3D::Vector3, 3> const MaexxnaRamp{{
@@ -120,15 +123,17 @@ namespace
         uint32 encounter;
         uint32 gameObjectData;
         uint32 entry;
-        std::array<uint32, 3> bosses;
+        std::array<uint32, 4> bosses;
         G3D::Vector3 floor;
         std::array<G3D::Vector3, 3> const* surveyedApproach = nullptr;
     };
 
     // Individual Progression's GO data keys; the destinations below are dry floor within use range.
-    std::array<WingPortal, 3> const WingPortals{{
+    std::array<WingPortal, 4> const WingPortals{{
         {MaexxnaEncounter, 201, MaexxnaPortalEntry, {351009, 351007, 351006}, MaexxnaRamp.back(), &MaexxnaRamp},
         {LoathebEncounter, 200, LoathebPortalEntry, {351008, 351005, 351020}, LoathebApproach.back(), &LoathebApproach},
+        {Thaddius40::Encounter, 202, ThaddiusPortalEntry,
+            {Naxx40PatchwerkEntry, 351003, 351004, Thaddius40::ThaddiusEntry}, ThaddiusPortalFloor},
         {HorsemenEncounter, 203, HorsemenPortalEntry, {351036, 351035, 351037}, HorsemenPortalFloor},
     }};
 
@@ -153,7 +158,7 @@ namespace
     bool WingsDone(InstanceScript const& instance)
     {
         return instance.IsBossDone(LoathebEncounter) && instance.IsBossDone(MaexxnaEncounter) &&
-            instance.IsBossDone(ThaddiusEncounter) && instance.IsBossDone(HorsemenEncounter);
+            instance.IsBossDone(Thaddius40::Encounter) && instance.IsBossDone(HorsemenEncounter);
     }
 
     bool Active(Player const& owner, DcRunState const& run)
@@ -177,13 +182,25 @@ namespace
         return nullptr;
     }
 
-    uint32 ChoosePortal(Player const& owner, InstanceScript const& instance, uint32 nextBoss)
+    uint32 ChoosePortal(Player const& owner, InstanceScript& instance, DcRunState const& run, uint32 nextBoss)
     {
         for (auto const& wing : WingPortals)
-            if (instance.IsBossDone(wing.encounter) && (Near(owner, wing.floor, 75.0f) ||
-                (wing.entry == HorsemenPortalEntry && InHorsemenRoom(owner) && Near(owner, wing.floor, WingWalkRadius))) &&
-                std::ranges::find(wing.bosses, nextBoss) == wing.bosses.end())
-                return wing.entry;
+        {
+            if (!instance.IsBossDone(wing.encounter) ||
+                std::ranges::find(wing.bosses, nextBoss) != wing.bosses.end())
+                continue;
+            if (!Near(owner, wing.floor, 75.0f) &&
+                !(wing.entry == HorsemenPortalEntry && InHorsemenRoom(owner) && Near(owner, wing.floor, WingWalkRadius)))
+                continue;
+            if (wing.entry == ThaddiusPortalEntry)
+            {
+                GameObject const* go = instance.GetGameObject(wing.gameObjectData);
+                if (!go || go->GetEntry() != wing.entry || go->GetGoState() != GO_STATE_ACTIVE ||
+                    go->HasGameObjectFlag(GO_FLAG_NOT_SELECTABLE) || !DcNaxx40Thaddius::CanUseWingPortal(owner, run))
+                    continue;
+            }
+            return wing.entry;
+        }
 
         if ((nextBoss == SapphironEntry || nextBoss == KelThuzadEntry) &&
             Near(owner, HubLanding, 25.0f) && WingsDone(instance))
@@ -484,7 +501,7 @@ bool Begin(PlayerbotAI* ai, uint32 nextBoss)
     DcRunState& run = DcRun::Of(ai);
     if (Active(*owner, run))
         return true;
-    uint32 const portal = ChoosePortal(*owner, *instance, nextBoss);
+    uint32 const portal = ChoosePortal(*owner, *instance, run, nextBoss);
     if (!run.enabled || run.paused || !portal)
         return false;
     if (instance->IsEncounterInProgress() || DcCombatFlag::AnyPartyEngagement(owner) || DcRezRecovery::IsPending(owner))

@@ -9,9 +9,11 @@
 
 class Player;
 class PlayerbotAI;
+struct DcRunState;
 
 namespace DcNaxx40Thaddius
 {
+    bool CanUseWingPortal(Player const& owner, DcRunState const& run);
     bool BeginExit(PlayerbotAI* ai);
     bool InExitTransition(PlayerbotAI* ai);
     bool BlocksGeneric(Player* bot, uint32 nextBoss);

@@ -691,9 +691,12 @@ namespace
                 InstanceScript* instance = player->GetInstanceScript();
                 if (!run.naxx40ThaddiusExitOwner.IsEmpty() && !GetExitMember(*player, run))
                     run.naxx40ThaddiusExitOwner.Clear();
-                if (instance && instance->IsBossDone(Thaddius40::Encounter) && ExitActive(*player, run))
+                bool const defeated = instance && instance->IsBossDone(Thaddius40::Encounter);
+                if (defeated && ExitActive(*player, run))
                     DriveExit(*ai, now);
                 bool const handoff = instance && instance->GetBossState(Thaddius40::Encounter) == IN_PROGRESS;
+                if (!handoff && !defeated)
+                    run.naxx40ThaddiusPortalCredit = {};
                 if (!run.naxx40ThaddiusOwner.IsEmpty())
                 {
                     PlayerbotAI* driver = DrivingAI(*player, run);
@@ -701,15 +704,20 @@ namespace
                         Release(*player, run, handoff);
                 }
                 if (!run.enabled || run.paused || !player->IsAlive() || !player->GetGroup() ||
-                    !instance || instance->IsBossDone(Thaddius40::Encounter))
+                    !instance || defeated)
                 {
                     run.naxx40ThaddiusOpening = {};
                     continue;
                 }
                 if (handoff)
                 {
-                    if (run.naxx40ThaddiusOpening.instanceId)
+                    Opening const& opening = run.naxx40ThaddiusOpening;
+                    if (opening.instanceId)
                     {
+                        // Only a live opening owned by this DC run grants portal priority.
+                        if (opening.phase == Phase::Pull && opening.instanceId == player->GetInstanceId() &&
+                            opening.group == player->GetGroup()->GetGUID())
+                            run.naxx40ThaddiusPortalCredit = {opening.group, opening.instanceId};
                         LOG_INFO("playerbots.dungeonclear", "[DC:{}] Thaddius opening handed off to Playerbots",
                             player->GetName());
                         DcActionShared::SetPhase(ai->GetAiObjectContext(), "");
@@ -732,6 +740,28 @@ namespace
             }
         }
     };
+}
+
+bool CanUseWingPortal(Player const& owner, DcRunState const& run)
+{
+    Group const* const group = owner.GetGroup();
+    auto const& credit = run.naxx40ThaddiusPortalCredit;
+    if (!group || credit.instanceId != owner.GetInstanceId() || credit.group != group->GetGUID() ||
+        (run.naxx40ThaddiusExit.instanceId == owner.GetInstanceId() &&
+         run.naxx40ThaddiusExit.group == group->GetGUID()))
+        return false;
+
+    for (GroupReference const* ref = group->GetFirstMember(); ref; ref = ref->next())
+    {
+        Player* const member = ref->GetSource();
+        if (!member || !member->IsAlive() || !GET_PLAYERBOT_AI(member))
+            continue;
+        if (!member->IsInWorld() || !member->IsInMap(&owner) || !member->InSamePhase(&owner) ||
+            member->IsFalling() || !Near(*member, BossPlatform, 34.0f) ||
+            !DcNaxx40SlimeCrossing::IsDryCampGround(*member, Location(*member)))
+            return false;
+    }
+    return true;
 }
 
 bool BeginExit(PlayerbotAI* ai)

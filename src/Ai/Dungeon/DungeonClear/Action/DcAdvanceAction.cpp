@@ -2341,7 +2341,8 @@ bool DungeonClearAdvanceAction::Execute(Event event)
     if (auto const staged = DcNaxx40Horsemen::Stage(*botAI, *next))
         return *staged;
 
-    if (DcNaxx40Thaddius::BeginExit(botAI) || DcNaxx40WingPortal::Begin(botAI, next->entry))
+    // Thaddius may use its native portal while the group is still on the boss platform.
+    if (DcNaxx40WingPortal::Begin(botAI, next->entry) || DcNaxx40Thaddius::BeginExit(botAI))
         return true;
 
     if (auto const staged = DcNaxx40KelThuzad::Stage(*botAI, *next))
