@@ -82,7 +82,8 @@ namespace
 
     // Detour can smooth a straight leg across the central dais even when the
     // endpoints are on the lower floor. Keep these surveyed legs on its skirts.
-    std::array<G3D::Vector3, 6> const HorsemenWest{{
+    std::array<G3D::Vector3, 7> const HorsemenWest{{
+        {2532.760f, -2985.965f, 241.310f},
         {2519.000f, -2995.000f, 241.290f},
         {2501.500f, -2986.500f, 241.285f},
         {2484.000f, -2978.000f, 241.280f},
@@ -374,13 +375,14 @@ namespace
     }
 
     void DriveMember(PlayerbotAI& ai, Transit::Member& member, GameObject* go, G3D::Vector3 const& destination,
-                     WingPortal const* wing, bool horsemenFallback, bool mayUse, uint32 now)
+                     WingPortal const* wing, bool horsemenFallback, bool allowDistantFollower, bool mayUse,
+                     uint32 now)
     {
         Player& bot = *ai.GetBot();
         bool const hub = !wing;
         auto const& spline = *bot.movespline;
         if (!bot.IsAlive() || bot.IsInCombat() || bot.IsBeingTeleported() || bot.IsFalling() || !ai.CanMove() ||
-            !Near(bot, destination, hub ? 45.0f : WingWalkRadius) ||
+            (!allowDistantFollower && !Near(bot, destination, hub ? 45.0f : WingWalkRadius)) ||
             (member.spline && !spline.Finalized() && spline.GetId() == member.spline) ||
             now - member.lastAttempt < RetryDelayMs)
             return;
@@ -468,7 +470,8 @@ namespace
             if (bot == &owner)
                 ownerMember = &member;
             else if (ready)
-                DriveMember(*memberAI, member, go, destination, wing, horsemenFallback, true, now);
+                DriveMember(*memberAI, member, go, destination, wing, horsemenFallback,
+                    horsemenFallback && InHorsemenRoom(*bot), true, now);
         }
 
         if (arrived == transfer.members.size())
@@ -481,7 +484,8 @@ namespace
         }
 
         if (ready && ownerMember)
-            DriveMember(ai, *ownerMember, go, destination, wing, horsemenFallback, arrived + 1 == transfer.members.size(), now);
+            DriveMember(ai, *ownerMember, go, destination, wing, horsemenFallback, false,
+                arrived + 1 == transfer.members.size(), now);
 
         if (ready && now - transfer.lastProgress >= ProgressLimitMs)
         {
