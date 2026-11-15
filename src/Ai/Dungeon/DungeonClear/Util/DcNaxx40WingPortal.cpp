@@ -23,6 +23,7 @@
 #include "Group.h"
 #include "InstanceScript.h"
 #include "Log.h"
+#include "Map.h"
 #include "MapReference.h"
 #include "MoveSpline.h"
 #include "ObjectAccessor.h"
@@ -35,6 +36,7 @@
 
 #include <algorithm>
 #include <array>
+#include <cmath>
 #include <limits>
 #include <span>
 
@@ -100,6 +102,17 @@ namespace
         {2525.000f, -2921.000f, 241.277f},
         {2515.000f, -2916.000f, 241.277f},
         HorsemenPortalFloor,
+    }};
+    // The straight mesh loses the grade from the raised dais to the room floor.
+    std::array<G3D::Vector3, 3> const HorsemenDaisWest{{
+        {2514.000f, -2938.000f, 245.192f},
+        {2508.000f, -2937.000f, 241.283f},
+        HorsemenPortalFloor,
+    }};
+    std::array<G3D::Vector3, 3> const HorsemenDaisEast{{
+        {2538.000f, -2949.500f, 244.853f},
+        {2540.500f, -2945.500f, 241.269f},
+        HorsemenCenter.front(),
     }};
 
     struct WingPortal
@@ -212,6 +225,46 @@ namespace
         return (approach.front() - start).dot(direction) > 0.65f && MoveDry(ai, approach.front());
     }
 
+    bool WalkHorsemenDais(PlayerbotAI& ai)
+    {
+        Player& bot = *ai.GetBot();
+        if (!InHorsemenRoom(bot) || bot.GetPositionZ() < 243.0f)
+            return false;
+
+        if (WalkSurveyedApproach(ai, HorsemenDaisWest) || WalkSurveyedApproach(ai, HorsemenDaisEast))
+            return true;
+
+        // A bot stopped by the eastern lip can be slightly below the WMO floor.
+        // Follow the sampled grade for this short first step onto the east route.
+        G3D::Vector3 const end = HorsemenDaisEast.front();
+        if (!Near(bot, end, 2.0f) || Near(bot, end, 0.65f))
+            return false;
+        constexpr float probeLift = 1.0f;
+        G3D::Vector3 const start = Location(bot);
+        if (!bot.GetMap()->isInLineOfSight(start.x, start.y, start.z + probeLift, end.x, end.y, end.z + probeLift,
+                bot.GetPhaseMask(), LINEOFSIGHT_ALL_CHECKS, VMAP::ModelIgnoreFlags::Nothing))
+            return false;
+
+        G3D::Vector3 const leg = end - start;
+        int const samples = static_cast<int>(std::ceil(leg.length() / 0.25f));
+        Movement::PointsArray path{start};
+        for (int index = 0; index <= samples; ++index)
+        {
+            G3D::Vector3 point = start + leg * (static_cast<float>(index) / samples);
+            PositionFullTerrainStatus terrain;
+            bot.GetMap()->GetFullTerrainStatusForPosition(bot.GetPhaseMask(), point.x, point.y,
+                point.z + probeLift, bot.GetCollisionHeight(), terrain);
+            if (terrain.floorZ < point.z - 0.5f || terrain.floorZ > point.z + 0.9f)
+                return false;
+            point.z = terrain.floorZ + 0.05f;
+            if (!DcNaxx40SlimeCrossing::IsDryCampGround(bot, point))
+                return false;
+            if (index)
+                path.push_back(point);
+        }
+        return DcMovement::SplinePath(&ai, path, MovementPriority::MOVEMENT_NORMAL, FORCED_MOVEMENT_RUN);
+    }
+
     bool WalkHorsemenApproach(PlayerbotAI& ai)
     {
         Player* bot = ai.GetBot();
@@ -304,7 +357,7 @@ namespace
         }
         auto const* approach = wing ? wing->surveyedApproach : nullptr;
         if (approach ? WalkSurveyedApproach(ai, *approach) :
-            MoveDry(ai, destination) || (horsemenFallback && WalkHorsemenApproach(ai)))
+            MoveDry(ai, destination) || (horsemenFallback && (WalkHorsemenDais(ai) || WalkHorsemenApproach(ai))))
             member.spline = spline.GetId();
     }
 
