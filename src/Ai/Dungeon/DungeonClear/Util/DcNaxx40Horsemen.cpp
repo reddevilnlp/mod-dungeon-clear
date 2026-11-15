@@ -31,6 +31,7 @@ namespace
     Position const SplitCamp(2555.9f, -2996.4f, 241.4f);
     Position const PullPoint(2516.0f, -2983.0f, 241.276f);
     constexpr float ApproachRange = 15.0f;
+    constexpr float PullArrival = 0.20f;
 
     bool BeforePull(Player const& bot)
     {
@@ -40,15 +41,22 @@ namespace
         return instance && instance->GetBossState(Encounter) == NOT_STARTED && !instance->IsEncounterInProgress();
     }
 
-    bool WalkDry(PlayerbotAI& ai, Position const& destination)
+    bool WalkingTo(Player* tank, Position const& destination, float tolerance)
+    {
+        if (!DcMovement::OwnsRunningEscort(tank))
+            return false;
+        G3D::Vector3 const end = tank->movespline->FinalDestination();
+        return destination.GetExactDist(end.x, end.y, end.z) <= tolerance;
+    }
+
+    bool WalkDry(PlayerbotAI& ai, Position const& destination, float tolerance = 1.0f)
     {
         Player* const tank = ai.GetBot();
-        G3D::Vector3 const end(destination.GetPositionX(), destination.GetPositionY(), destination.GetPositionZ());
-        if (DcMovement::OwnsRunningEscort(tank) && (tank->movespline->FinalDestination() - end).squaredLength() < 1.0f)
+        if (WalkingTo(tank, destination, tolerance))
             return true;
 
         auto path = DcNaxx40SlimeCrossing::BuildDryCampPath(tank, destination);
-        if (path.empty())
+        if (path.empty() || destination.GetExactDist(path.back().x, path.back().y, path.back().z) > tolerance)
             return false;
         DcMovement::ClearMovementWait(tank);
         return DcMovement::SplinePath(&ai, path, MovementPriority::MOVEMENT_COMBAT, FORCED_MOVEMENT_RUN);
@@ -154,9 +162,14 @@ bool DcNaxx40Horsemen::ConfirmReady(PlayerbotAI& ai)
 bool DcNaxx40Horsemen::TryCoordinatedPull(PlayerbotAI& ai)
 {
     Player& tank = *ai.GetBot();
-    if (tank.GetExactDist(&PullPoint) > 1.0f)
+    // Near the end of the glide, pinning the tank short can leave the platform
+    // lip in the taunt's line of sight. Let the validated escort finish first.
+    if (WalkingTo(&tank, PullPoint, PullArrival))
+        return true;
+
+    if (tank.GetExactDist(&PullPoint) > PullArrival)
     {
-        if (WalkDry(ai, PullPoint))
+        if (WalkDry(ai, PullPoint, PullArrival))
             return true;
         DcMovement::StopBot(&tank, DcMovement::Stop::HardPin);
         DcActionShared::StallDungeonClear(&ai, "Four Horsemen: waiting for a dry path to the pull point.");
