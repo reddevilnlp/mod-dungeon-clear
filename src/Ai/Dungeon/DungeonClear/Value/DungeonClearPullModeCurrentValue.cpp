@@ -14,6 +14,7 @@
 #include "Ai/Dungeon/DungeonClear/Util/DcBossStandDown.h"
 #include "Ai/Dungeon/DungeonClear/Util/DcLeaderSignal.h"
 #include "Ai/Dungeon/DungeonClear/Util/DcNaxx40GluthTransit.h"
+#include "Ai/Dungeon/DungeonClear/Util/DcNaxx40LoathebTransit.h"
 #include "Ai/Dungeon/DungeonClear/Util/DcNaxx40Patchwerk.h"
 #include "Ai/Dungeon/DungeonClear/Util/DcNaxx40LivingPoison.h"
 #include "Ai/Dungeon/DungeonClear/Util/DcNoStopZone.h"
@@ -124,6 +125,7 @@ bool DungeonClearPullModeCurrentValue::Calculate()
     auto const next = bot->GetMapId() == 533
         ? AI_VALUE(std::optional<DungeonBossInfo>, DcKey::NextDungeonBoss) : std::nullopt;
     if ((pull.phase == DcPullPhase::Idle && next && DcNaxx40GluthTransit::BlocksGeneric(bot, next->entry)) ||
+        DcNaxx40LoathebTransit::HoldsProgression(botAI) ||
         DungeonEventExecutor::IsPullOwningEventDriving(bot, context) ||
         DcNoStopZone::IsInNoStopZone(bot, context) ||
         DcBossStandDown::IsActive(bot))

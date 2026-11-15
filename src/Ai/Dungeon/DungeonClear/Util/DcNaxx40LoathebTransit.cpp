@@ -5,8 +5,11 @@
 #include "DcNaxx40LoathebTransit.h"
 
 #include "Ai/Dungeon/DungeonClear/Data/DungeonBossInfo.h"
+#include "Ai/Dungeon/DungeonClear/DcPullContext.h"
 #include "Ai/Raid/Naxx40/Naxx40Encounter.h"
 #include "AllMapScript.h"
+#include "DcCombatFlag.h"
+#include "DcLeaderSignal.h"
 #include "DcModuleEnable.h"
 #include "DcMovement.h"
 #include "DcRun.h"
@@ -36,6 +39,7 @@ namespace
     constexpr uint32 UpdateInterval = 400;
     constexpr uint32 MoveRetry = 1600;
     constexpr uint32 TransitTimeout = 45000;
+    constexpr uint32 CampTimeout = 75000;
     constexpr float CampRadius = 7.0f;
     constexpr float StartRadius = 28.0f;
 
@@ -121,6 +125,17 @@ namespace
 
     Player* ActiveLeader(PlayerbotAI* ai);
 
+    void StandDownPull(PlayerbotAI& ai)
+    {
+        AiObjectContext* context = ai.GetAiObjectContext();
+        DcPullContext& pull = context->GetValue<DcPullContext&>(DcKey::PullContext)->Get();
+        pull.Reset();
+        // Reuse the pull governor's normal preference restoration at handoff.
+        pull.eventForced = true;
+        context->GetValue<bool>(DcKey::PullMode)->Set(false);
+        DcLeaderSignal::SetLeaderDazeImmunity(ai.GetBot(), false);
+    }
+
     void Release(Player& member, DcRunState& local)
     {
         if (local.naxx40LoathebSpline && HasCampGlide(member) && !AtCamp(member))
@@ -130,9 +145,10 @@ namespace
         local.naxx40LoathebTransitOwner.Clear();
         local.naxx40LoathebMoveAttempt = 0;
         local.naxx40LoathebSpline = 0;
+        local.naxx40LoathebArrived = false;
     }
 
-    void Drive(Player& leader, Transit& transit, uint32 now)
+    void Drive(PlayerbotAI& leaderAI, Player& leader, Transit& transit, uint32 now)
     {
         if (transit.lastUpdate && getMSTimeDiff(transit.lastUpdate, now) < UpdateInterval)
             return;
@@ -151,25 +167,33 @@ namespace
             if (!ai)
                 continue;
 
-            ObjectGuid& owner = DcRun::Of(ai).naxx40LoathebTransitOwner;
+            DcRunState& local = DcRun::Of(ai);
+            ObjectGuid& owner = local.naxx40LoathebTransitOwner;
             if (owner != leader.GetGUID() && !InCorridor(*member) && !NearEntrance(*member))
                 continue;
             owner = leader.GetGUID();
             ++crossing;
-            if (AtCamp(*member))
+            local.naxx40LoathebArrived |= AtCamp(*member);
+            if (local.naxx40LoathebArrived)
                 ++arrived;
             else
                 MoveToCamp(ai, *member, now);
         }
 
-        bool const regrouped = AtCamp(leader) && crossing && arrived == crossing;
-        if (!regrouped && getMSTimeDiff(transit.started, now) < TransitTimeout)
+        uint32 const elapsed = getMSTimeDiff(transit.started, now);
+        bool const leaderArrived = DcRun::Of(&leaderAI).naxx40LoathebArrived;
+        bool const regrouped = leaderArrived && crossing && arrived == crossing;
+        bool const campBusy = leaderArrived && DcCombatFlag::AnyPartyEngagement(&leader);
+        if ((!leaderArrived && elapsed < TransitTimeout) ||
+            (leaderArrived && (!regrouped || campBusy) && elapsed < CampTimeout))
             return;
 
+        StandDownPull(leaderAI);
         transit.finished = true;
-        LOG_INFO("playerbots.dungeonclear", "[DC:{}] Naxx40 Loatheb transit {} after {:.1f}s, camp {}/{} in instance {}",
+        LOG_INFO("playerbots.dungeonclear",
+            "[DC:{}] Naxx40 Loatheb transit {} after {:.1f}s, camp {}/{}, combat={} in instance {}",
             leader.GetName(), regrouped ? "regrouped" : "timed out",
-            getMSTimeDiff(transit.started, now) / 1000.0f, arrived, crossing, transit.instanceId);
+            elapsed / 1000.0f, arrived, crossing, campBusy, transit.instanceId);
     }
 
     class LoathebTransitMapScript final : public AllMapScript
@@ -214,10 +238,11 @@ namespace
                     transit.group = leader->GetGroup()->GetGUID();
                     transit.instanceId = leader->GetInstanceId();
                     transit.started = now;
+                    StandDownPull(*ai);
                     LOG_INFO("playerbots.dungeonclear", "[DC:{}] Naxx40 Loatheb transit started in instance {}",
                         leader->GetName(), transit.instanceId);
                 }
-                Drive(*leader, transit, now);
+                Drive(*ai, *leader, transit, now);
             }
         }
     };
@@ -246,7 +271,7 @@ namespace
 
 bool IsCrossing(PlayerbotAI* ai)
 {
-    return ActiveLeader(ai) && !AtCamp(*ai->GetBot());
+    return ActiveLeader(ai) && !DcRun::Of(ai).naxx40LoathebArrived && !AtCamp(*ai->GetBot());
 }
 
 bool HoldsProgression(PlayerbotAI* ai)

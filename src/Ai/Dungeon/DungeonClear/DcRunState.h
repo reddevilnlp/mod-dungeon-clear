@@ -152,6 +152,7 @@ struct DcRunState
     ObjectGuid naxx40LoathebTransitOwner;
     uint32 naxx40LoathebMoveAttempt = 0;
     uint32 naxx40LoathebSpline = 0;
+    bool naxx40LoathebArrived = false;
 
     struct ThaddiusOpening
     {
