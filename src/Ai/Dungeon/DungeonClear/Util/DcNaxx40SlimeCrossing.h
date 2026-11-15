@@ -36,6 +36,7 @@ namespace DcNaxx40SlimeCrossing
     bool TryGrobbulusCrossing(PlayerbotAI* ai);
     bool IsDryCampGround(Player const& bot, G3D::Vector3 const& point, float floorProbeLift = 0.0f);
     Movement::PointsArray BuildSurveyedDryLeg(Player* bot, G3D::Vector3 const& end);
+    Movement::PointsArray BuildSurveyedDryLeg(Player* bot, G3D::Vector3 const& start, G3D::Vector3 const& end);
     Movement::PointsArray BuildDryCampPath(Player* bot, Position const& destination);
 
     // Local Patchwerk rejoin: tests short floor-following detours to a dry point.

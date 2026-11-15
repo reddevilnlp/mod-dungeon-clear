@@ -327,7 +327,11 @@ bool IsDryCampGround(Player const& bot, G3D::Vector3 const& point, float floorPr
 
 Movement::PointsArray BuildSurveyedDryLeg(Player* bot, G3D::Vector3 const& end)
 {
-    G3D::Vector3 const start(bot->GetPositionX(), bot->GetPositionY(), bot->GetPositionZ());
+    return BuildSurveyedDryLeg(bot, {bot->GetPositionX(), bot->GetPositionY(), bot->GetPositionZ()}, end);
+}
+
+Movement::PointsArray BuildSurveyedDryLeg(Player* bot, G3D::Vector3 const& start, G3D::Vector3 const& end)
+{
     G3D::Vector3 const leg = end - start;
     if (leg.squaredLength() > 32.0f * 32.0f ||
         !bot->GetMap()->isInLineOfSight(start.x, start.y, start.z + 0.75f, end.x, end.y, end.z + 0.75f,

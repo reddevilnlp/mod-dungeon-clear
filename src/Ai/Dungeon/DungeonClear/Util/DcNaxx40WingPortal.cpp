@@ -223,7 +223,36 @@ namespace
         return DcMovement::SplinePath(&ai, points, MovementPriority::MOVEMENT_NORMAL, FORCED_MOVEMENT_RUN);
     }
 
-    bool WalkSurveyedApproach(PlayerbotAI& ai, std::array<G3D::Vector3, 3> const& approach)
+    bool WalkMaexxnaEntry(PlayerbotAI& ai, G3D::Vector3 const& start)
+    {
+        G3D::Vector3 const& end = MaexxnaRamp.front();
+        float const distanceSquared = (end - start).squaredLength();
+        if (distanceSquared <= 32.0f * 32.0f || distanceSquared > 64.0f * 64.0f ||
+            std::abs(start.z - end.z) > 6.0f)
+            return false;
+
+        // The room floor and ramp have different grades. Put the midpoint on the
+        // measured floor before validating both legs of the portal approach.
+        Player* bot = ai.GetBot();
+        G3D::Vector3 mid = (start + end) * 0.5f;
+        PositionFullTerrainStatus terrain;
+        bot->GetMap()->GetFullTerrainStatusForPosition(bot->GetPhaseMask(), mid.x, mid.y,
+            mid.z + 0.6f, bot->GetCollisionHeight(), terrain);
+        if (!(std::abs(mid.z - terrain.floorZ) <= 2.0f))
+            return false;
+        mid.z = terrain.floorZ + 0.05f;
+
+        auto path = DcNaxx40SlimeCrossing::BuildSurveyedDryLeg(bot, start, mid);
+        if (path.empty())
+            return false;
+        auto const finish = DcNaxx40SlimeCrossing::BuildSurveyedDryLeg(bot, mid, end);
+        if (finish.empty())
+            return false;
+        path.insert(path.end(), finish.begin() + 1, finish.end());
+        return DcMovement::SplinePath(&ai, path, MovementPriority::MOVEMENT_NORMAL, FORCED_MOVEMENT_RUN);
+    }
+
+    bool WalkSurveyedApproach(PlayerbotAI& ai, std::array<G3D::Vector3, 3> const& approach, bool maexxna = false)
     {
         Player* bot = ai.GetBot();
         G3D::Vector3 direction = approach.back() - approach.front();
@@ -239,7 +268,9 @@ namespace
             if (!path.empty())
                 return DcMovement::SplinePath(&ai, path, MovementPriority::MOVEMENT_NORMAL, FORCED_MOVEMENT_RUN);
         }
-        return (approach.front() - start).dot(direction) > 0.65f && MoveDry(ai, approach.front());
+        if ((approach.front() - start).dot(direction) <= 0.65f)
+            return false;
+        return (maexxna && WalkMaexxnaEntry(ai, start)) || MoveDry(ai, approach.front());
     }
 
     bool WalkHorsemenDais(PlayerbotAI& ai)
@@ -373,7 +404,7 @@ namespace
             return;
         }
         auto const* approach = wing ? wing->surveyedApproach : nullptr;
-        if (approach ? WalkSurveyedApproach(ai, *approach) :
+        if (approach ? WalkSurveyedApproach(ai, *approach, wing->entry == MaexxnaPortalEntry) :
             MoveDry(ai, destination) || (horsemenFallback && (WalkHorsemenDais(ai) || WalkHorsemenApproach(ai))))
             member.spline = spline.GetId();
     }
