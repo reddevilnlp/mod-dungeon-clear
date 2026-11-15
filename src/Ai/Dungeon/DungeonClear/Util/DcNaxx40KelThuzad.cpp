@@ -4,6 +4,7 @@
 
 #include "DcNaxx40KelThuzad.h"
 
+#include <array>
 #include <string>
 
 #include "Ai/Dungeon/DungeonClear/Action/DcActionShared.h"
@@ -38,8 +39,16 @@ namespace
     // Reach the inside of the gate on the generic corridor/breadcrumb path.
     // The custom dry leg starts no farther west than x=3647, past gate x=3637.4.
     constexpr float StagingRadius = 26.0f;
+    // Once the leader is inside, collect the followers parked at its last breadcrumb outside.
+    constexpr float FollowerStagingRadius = 55.0f;
     constexpr float ArrivalRadius = 1.0f;
     constexpr float CampRadius = 8.0f;
+    std::array<Position, 4> const CampApproach{{
+        {3637.400f, -5090.350f, 143.231f},
+        {3666.000f, -5096.450f, 143.100f},
+        {3669.330f, -5097.090f, 142.032f},
+        InsideCamp,
+    }};
 
     InstanceScript* OpeningInstance(Player const* player)
     {
@@ -99,6 +108,38 @@ namespace
         DcMovement::ClearMovementWait(player);
         return DcMovement::SplinePath(&ai, path, MovementPriority::MOVEMENT_NORMAL, FORCED_MOVEMENT_RUN);
     }
+
+    bool WalkToCamp(PlayerbotAI& ai)
+    {
+        Player* player = ai.GetBot();
+        if (!ai.CanMove() || player->IsFalling() || player->IsBeingTeleported())
+            return false;
+        for (Position const& waypoint : CampApproach)
+            if (OnLeg(player, waypoint))
+                return true;
+
+        if (WalkDry(ai, InsideCamp))
+            return true;
+
+        // The MMAP shortcut can cut under the lip where the approach drops to the chamber floor.
+        for (Position const& waypoint : CampApproach)
+        {
+            if (waypoint.GetPositionX() < InsideCamp.GetPositionX() &&
+                waypoint.GetPositionX() <= player->GetPositionX() + 0.65f)
+                continue;
+            auto path = DcNaxx40SlimeCrossing::BuildSurveyedDryLeg(player,
+                {waypoint.GetPositionX(), waypoint.GetPositionY(), waypoint.GetPositionZ()});
+            if (path.empty())
+                return WalkDry(ai, waypoint);
+            DcMovement::ClearMovementWait(player);
+            if (!DcMovement::SplinePath(&ai, path, MovementPriority::MOVEMENT_NORMAL, FORCED_MOVEMENT_RUN))
+                return false;
+            LOG_DEBUG("playerbots.dungeonclear", "[DC:{}] Kel'Thuzad camp leg -> ({:.2f},{:.2f},{:.2f})",
+                player->GetName(), waypoint.GetPositionX(), waypoint.GetPositionY(), waypoint.GetPositionZ());
+            return true;
+        }
+        return false;
+    }
 }
 
 bool DcNaxx40KelThuzad::IsObjective(Player const* player, uint32 entry)
@@ -131,7 +172,7 @@ std::optional<bool> DcNaxx40KelThuzad::Stage(PlayerbotAI& ai, DungeonBossInfo co
         return true;
     if (leader->GetExactDist(&InsideCamp) > ArrivalRadius)
     {
-        if (WalkDry(ai, InsideCamp))
+        if (WalkToCamp(ai))
             return true;
         DcMovement::StopBot(leader, DcMovement::Stop::Hold);
         DcActionShared::StallDungeonClear(&ai, "Kel'Thuzad: waiting for a dry path through the gate");
@@ -177,7 +218,7 @@ std::optional<bool> DcNaxx40KelThuzad::StageFollower(PlayerbotAI& ai, Player* le
 {
     Player* member = ai.GetBot();
     if (!member || !leader || member->IsInCombat() || !member->IsInMap(leader) ||
-        member->GetExactDist(&InsideCamp) > StagingRadius || !LeaderStages(leader) || DcRezRecovery::IsPending(leader))
+        member->GetExactDist(&InsideCamp) > FollowerStagingRadius || !LeaderStages(leader) || DcRezRecovery::IsPending(leader))
         return std::nullopt;
     InstanceScript* instance = leader->GetInstanceScript();
     if (!GateOpen(*instance) || member->GetExactDist(&InsideCamp) <= CampRadius)
@@ -185,14 +226,14 @@ std::optional<bool> DcNaxx40KelThuzad::StageFollower(PlayerbotAI& ai, Player* le
         DcMovement::StopBot(member, DcMovement::Stop::Hold);
         return false;
     }
-    return WalkDry(ai, InsideCamp);
+    return WalkToCamp(ai);
 }
 
 bool DcNaxx40KelThuzad::OwnsMovement(PlayerbotAI& ai)
 {
     Player* player = ai.GetBot();
     if (!player || !IsNaxx40Map(player->FindMap()) || player->IsInCombat() ||
-        player->GetExactDist(&InsideCamp) > StagingRadius)
+        player->GetExactDist(&InsideCamp) > FollowerStagingRadius)
         return false;
     Player* leader = DcLeaderSignal::FindRunOwner(player);
     return leader && LeaderStages(leader) && !DcRezRecovery::IsPending(leader);
