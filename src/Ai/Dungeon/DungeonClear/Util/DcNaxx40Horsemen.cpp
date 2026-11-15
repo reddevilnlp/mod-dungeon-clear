@@ -31,6 +31,7 @@ namespace
     Position const SplitCamp(2555.9f, -2996.4f, 241.4f);
     Position const PullPoint(2516.0f, -2983.0f, 241.276f);
     constexpr float ApproachRange = 15.0f;
+    constexpr float SplitCampArrival = 1.0f;
     constexpr float PullArrival = 0.20f;
 
     bool BeforePull(Player const& bot)
@@ -112,7 +113,8 @@ std::optional<bool> DcNaxx40Horsemen::Stage(PlayerbotAI& ai, DungeonBossInfo con
     {
         // The approach enters the split camp before the boss can body-aggro.
         // Also allow a resumed run already past the camp to arrange a fresh split.
-        if (bot->GetExactDist(&SplitCamp) > ApproachRange)
+        float const campDistance = bot->GetExactDist(&SplitCamp);
+        if (campDistance > ApproachRange)
         {
             if (bot->GetPositionY() <= SplitCamp.GetPositionY() || bot->GetPositionZ() < 239.0f ||
                 bot->GetPositionZ() > 248.0f)
@@ -124,9 +126,30 @@ std::optional<bool> DcNaxx40Horsemen::Stage(PlayerbotAI& ai, DungeonBossInfo con
             return false;
         }
 
+        if (WalkingTo(bot, SplitCamp, SplitCampArrival))
+            return true;
+
+        bool const roomReady = RoomMusterReady(bot);
+        // At the gate the tank can already be inside while ordinary following parks the column outside.
+        if (!roomReady && campDistance > SplitCampArrival && bot->GetPositionY() < SplitCamp.GetPositionY() &&
+            bot->GetPositionZ() >= 239.0f && bot->GetPositionZ() <= 248.0f)
+        {
+            if (WalkDry(ai, SplitCamp, SplitCampArrival))
+                return true;
+            auto path = DcNaxx40SlimeCrossing::BuildSurveyedDryLeg(bot,
+                {SplitCamp.GetPositionX(), SplitCamp.GetPositionY(), SplitCamp.GetPositionZ()});
+            if (!path.empty())
+            {
+                DcMovement::ClearMovementWait(bot);
+                if (DcMovement::SplinePath(&ai, path, MovementPriority::MOVEMENT_COMBAT, FORCED_MOVEMENT_RUN))
+                    return true;
+            }
+            DcActionShared::StallDungeonClear(&ai, "Four Horsemen: waiting for a dry path into the split camp.");
+        }
+
         DcMovement::StopBot(bot, DcMovement::Stop::HardPin);
         DcMovement::ClearMovementWait(bot);
-        if (!RoomMusterReady(bot))
+        if (!roomReady)
         {
             DcActionShared::SetPhase(context, "waiting for the raid inside the Four Horsemen gate");
             return false;
