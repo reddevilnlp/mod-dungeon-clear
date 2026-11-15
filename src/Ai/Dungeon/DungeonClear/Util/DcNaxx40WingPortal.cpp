@@ -48,6 +48,7 @@ namespace
     constexpr uint32 HorsemenEncounter = 12;
     constexpr uint32 SapphironEntry = 351018;
     constexpr uint32 KelThuzadEntry = 351019;
+    constexpr uint32 MaexxnaPortalEntry = 181575;
     constexpr uint32 HubTrigger = 4156;
     constexpr uint32 RetryDelayMs = 1500;
     constexpr uint32 ProgressLimitMs = 75000;
@@ -55,6 +56,12 @@ namespace
     G3D::Vector3 const HubLanding{3005.51f, -3434.64f, 304.195f};
     G3D::Vector3 const HubTriggerCenter{3006.090f, -3434.170f, 306.195f};
     G3D::Vector3 const FrostwyrmLanding{3498.300f, -5349.490f, 144.968f};
+    // The ramp climbs mostly after the floor turns. A single straight Detour leg loses this grade.
+    std::array<G3D::Vector3, 3> const MaexxnaRamp{{
+        {3498.667f, -3926.623f, 299.38f},
+        {3477.333f, -3935.084f, 301.80f},
+        {3465.753f, -3939.677f, 306.90f},
+    }};
 
     struct WingPortal
     {
@@ -67,7 +74,7 @@ namespace
 
     // Individual Progression's GO data keys; the destinations below are dry floor within use range.
     std::array<WingPortal, 3> const WingPortals{{
-        {MaexxnaEncounter, 201, 181575, {351009, 351007, 351006}, {3465.753f, -3939.677f, 307.196f}},
+        {MaexxnaEncounter, 201, MaexxnaPortalEntry, {351009, 351007, 351006}, MaexxnaRamp.back()},
         {LoathebEncounter, 200, 181577, {351008, 351005, 351020}, {2909.000f, -4025.020f, 273.691f}},
         {HorsemenEncounter, 203, 181578, {351036, 351035, 351037}, {2493.020f, -2921.780f, 241.440f}},
     }};
@@ -137,6 +144,25 @@ namespace
         return DcMovement::SplinePath(&ai, points, MovementPriority::MOVEMENT_NORMAL, FORCED_MOVEMENT_RUN);
     }
 
+    bool WalkMaexxnaRamp(PlayerbotAI& ai)
+    {
+        Player* bot = ai.GetBot();
+        G3D::Vector3 direction = MaexxnaRamp.back() - MaexxnaRamp.front();
+        direction.z = 0.0f;
+        direction /= direction.length();
+        G3D::Vector3 const start = Location(*bot);
+        for (auto point = MaexxnaRamp.rbegin(); point != MaexxnaRamp.rend(); ++point)
+        {
+            if ((*point - start).dot(direction) <= 0.65f)
+                continue;
+
+            auto path = DcNaxx40SlimeCrossing::BuildSurveyedDryLeg(bot, *point);
+            if (!path.empty())
+                return DcMovement::SplinePath(&ai, path, MovementPriority::MOVEMENT_NORMAL, FORCED_MOVEMENT_RUN);
+        }
+        return (MaexxnaRamp.front() - start).dot(direction) > 0.65f && MoveDry(ai, MaexxnaRamp.front());
+    }
+
     void UsePortal(Player& bot, GameObject const& go)
     {
         if (go.GetGoState() != GO_STATE_ACTIVE || go.HasGameObjectFlag(GO_FLAG_NOT_SELECTABLE))
@@ -159,9 +185,10 @@ namespace
     }
 
     void DriveMember(PlayerbotAI& ai, Transit::Member& member, GameObject* go, G3D::Vector3 const& destination,
-                     bool hub, bool mayUse, uint32 now)
+                     uint32 portalEntry, bool mayUse, uint32 now)
     {
         Player& bot = *ai.GetBot();
+        bool const hub = portalEntry == HubTrigger;
         auto const& spline = *bot.movespline;
         if (!bot.IsAlive() || bot.IsInCombat() || bot.IsBeingTeleported() || bot.IsFalling() || !ai.CanMove() ||
             !Near(bot, destination, hub ? 45.0f : 110.0f) ||
@@ -187,7 +214,7 @@ namespace
                 UsePortal(bot, *go);
             return;
         }
-        if (MoveDry(ai, destination))
+        if (portalEntry == MaexxnaPortalEntry ? WalkMaexxnaRamp(ai) : MoveDry(ai, destination))
             member.spline = spline.GetId();
     }
 
@@ -220,6 +247,7 @@ namespace
             !DcCombatFlag::AnyPartyEngagement(&owner) && !DcRezRecovery::IsPending(&owner);
         G3D::Vector3 const& destination = hub ? HubLanding : wing->floor;
         unsigned arrived = 0;
+        unsigned inUseRange = 0;
         Transit::Member* ownerMember = nullptr;
         for (Transit::Member& member : transfer.members)
         {
@@ -243,10 +271,12 @@ namespace
                 continue;
             }
             member.arrived = false;
+            inUseRange += hub ? Near(*bot, HubTriggerCenter, 5.75f) :
+                go && go->IsWithinDistInMap(bot, go->GetInteractionDistance());
             if (bot == &owner)
                 ownerMember = &member;
             else if (ready)
-                DriveMember(*memberAI, member, go, destination, hub, true, now);
+                DriveMember(*memberAI, member, go, destination, transfer.portalEntry, true, now);
         }
 
         if (arrived == transfer.members.size())
@@ -259,14 +289,18 @@ namespace
         }
 
         if (ready && ownerMember)
-            DriveMember(ai, *ownerMember, go, destination, hub, arrived + 1 == transfer.members.size(), now);
+            DriveMember(ai, *ownerMember, go, destination, transfer.portalEntry, arrived + 1 == transfer.members.size(), now);
 
         if (ready && now - transfer.lastProgress >= ProgressLimitMs)
         {
             run.paused = true;
             DcActionShared::SetPhase(ai.GetAiObjectContext(), "Naxxramas: waiting for the wing portal");
-            LOG_WARN("playerbots.dungeonclear", "[DC:{}] Naxx40 portal {} stalled instance {} arrived={}/{}",
-                owner.GetName(), transfer.portalEntry, transfer.instanceId, arrived, transfer.members.size());
+            G3D::Vector3 const position = Location(owner);
+            LOG_WARN("playerbots.dungeonclear",
+                "[DC:{}] Naxx40 portal {} stalled instance {} arrived={}/{} inUseRange={} goState={} selectable={} owner=({:.2f},{:.2f},{:.2f})",
+                owner.GetName(), transfer.portalEntry, transfer.instanceId, arrived, transfer.members.size(), inUseRange,
+                go ? int(go->GetGoState()) : -1, go && !go->HasGameObjectFlag(GO_FLAG_NOT_SELECTABLE),
+                position.x, position.y, position.z);
         }
         if (!ready)
             transfer.lastProgress = now;
