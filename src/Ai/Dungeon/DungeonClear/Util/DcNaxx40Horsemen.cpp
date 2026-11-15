@@ -10,14 +10,12 @@
 #include "Ai/Dungeon/DungeonClear/Settings/DcSettings.h"
 #include "Ai/Raid/Naxx40/FourHorsemen40.h"
 #include "Ai/Raid/Naxx40/Naxx40Encounter.h"
-#include "Creature.h"
 #include "DcMovement.h"
 #include "DcNaxx40SlimeCrossing.h"
 #include "DcRaidMuster.h"
 #include "DcRezRecovery.h"
 #include "Group.h"
 #include "InstanceScript.h"
-#include "Log.h"
 #include "MoveSpline.h"
 #include "Player.h"
 #include "PlayerbotAI.h"
@@ -153,13 +151,9 @@ bool DcNaxx40Horsemen::ConfirmReady(PlayerbotAI& ai)
     return Ready(ai) && FourHorsemen40::PrepareOpening(ai) == Preparation::Ready;
 }
 
-std::optional<bool> DcNaxx40Horsemen::TryRangedPull(PlayerbotAI& ai, Creature& boss)
+bool DcNaxx40Horsemen::TryCoordinatedPull(PlayerbotAI& ai)
 {
     Player& tank = *ai.GetBot();
-    auto const opener = DcActionShared::ResolvePullSpell(&ai, &tank);
-    if (!opener)
-        return std::nullopt;
-
     if (tank.GetExactDist(&PullPoint) > 1.0f)
     {
         if (WalkDry(ai, PullPoint))
@@ -169,20 +163,9 @@ std::optional<bool> DcNaxx40Horsemen::TryRangedPull(PlayerbotAI& ai, Creature& b
         return false;
     }
 
-    float const distance = tank.GetExactDist(&boss);
-    if (distance < opener->minRange || distance > opener->maxRange || !tank.IsWithinLOSInMap(&boss))
-        return std::nullopt;
-
-    if (tank.IsNonMeleeSpellCast(false))
-        return true;
     DcMovement::StopBot(&tank, DcMovement::Stop::HardPin);
-    tank.SetSelection(boss.GetGUID());
-    tank.SetFacingToObject(&boss);
-    if (!ai.CastSpell(opener->spellId, &boss))
-        return std::nullopt;
-
+    if (!FourHorsemen40::PullOpening(ai))
+        return false;
     DcActionShared::ClearStall(ai.GetAiObjectContext());
-    LOG_INFO("playerbots.dungeonclear", "[DC:{}] Four Horsemen: ranged tag on {} from {:.1f}yd",
-        tank.GetName(), boss.GetName(), distance);
     return true;
 }

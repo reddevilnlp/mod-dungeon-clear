@@ -1087,8 +1087,7 @@ bool DungeonClearEngageBossAction::Execute(Event event)
     {
         if (!DcNaxx40Horsemen::ConfirmReady(*botAI))
             return false;
-        if (auto const ranged = DcNaxx40Horsemen::TryRangedPull(*botAI, *boss))
-            return *ranged;
+        return DcNaxx40Horsemen::TryCoordinatedPull(*botAI);
     }
 
     if (razuviousOpening && DcNaxx40Razuvious::Open(botAI, *boss))

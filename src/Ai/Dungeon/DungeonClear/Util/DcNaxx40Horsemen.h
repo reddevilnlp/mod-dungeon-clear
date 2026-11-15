@@ -11,7 +11,6 @@
 
 class Player;
 class PlayerbotAI;
-class Creature;
 struct DungeonBossInfo;
 
 namespace DcNaxx40Horsemen
@@ -23,7 +22,7 @@ namespace DcNaxx40Horsemen
     bool OwnsMovement(PlayerbotAI& ai);
     bool Ready(PlayerbotAI& ai);
     bool ConfirmReady(PlayerbotAI& ai);
-    std::optional<bool> TryRangedPull(PlayerbotAI& ai, Creature& boss);
+    bool TryCoordinatedPull(PlayerbotAI& ai);
 }
 
 #endif
