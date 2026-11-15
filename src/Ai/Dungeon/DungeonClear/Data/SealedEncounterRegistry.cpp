@@ -234,6 +234,9 @@ namespace
         {   532, 15690, -11015.0f, -10900.0f, -2040.0f, -1935.0f,  86.0f, 10.0f, 272.0f, 280.0f },
         // Naxxramas 40 Gothik: gather on the living side before the balcony tag closes the room.
         {   533, 351035, 2633.84f, 2750.49f, -3434.0f, -3360.78f, 47.0f, 10.0f, 264.0f, 275.0f },
+        // Gate 181119 closes on pull. Its sill is y=-3017.17, 97.6yd from Mograine.
+        // The dry approach passes y=-3008 on the inside, still well outside aggro.
+        {   533, 351037, 2450.0f, 2630.0f, -3014.0f, -2880.0f, 112.0f, 10.0f, 239.0f, 248.0f },
     };
 }
 
