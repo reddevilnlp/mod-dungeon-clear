@@ -26,6 +26,7 @@
 #include "Ai/Dungeon/DungeonClear/Util/DcLyceumCloseUpDecision.h"
 #include "Ai/Dungeon/DungeonClear/Util/DcNaxx40Embalming.h"
 #include "Ai/Dungeon/DungeonClear/Util/DcNaxx40GluthTransit.h"
+#include "Ai/Dungeon/DungeonClear/Util/DcNaxx40LoathebTransit.h"
 #include "Ai/Dungeon/DungeonClear/Util/DcNaxx40Thaddius.h"
 #include "Ai/Dungeon/DungeonClear/Util/DcNaxx40WingPortal.h"
 #include "Ai/Dungeon/DungeonClear/Util/DcNaxx40LivingPoison.h"
@@ -124,6 +125,19 @@ static bool InterruptsGluthTransit(PlayerbotAI* ai, Player* bot, Action* action,
         return DcNaxx40GluthTransit::InGasTransit(ai);
     return (dynamic_cast<MovementAction*>(action) || dynamic_cast<CastReachTargetSpellAction*>(action) ||
             name == "open loot" || name == "loot") && DcNaxx40GluthTransit::OwnsMovement(ai);
+}
+
+static bool InterruptsLoathebTransit(PlayerbotAI* ai, Action* action, std::string const& name)
+{
+    if ((name == "dungeon clear advance" || name == "dungeon clear pull" || name == "dungeon clear pull maneuver" ||
+         name == "dungeon clear engage boss" || name == "dungeon clear engage trash" ||
+         name == "dungeon clear recover stranded") && DcNaxx40LoathebTransit::HoldsProgression(ai))
+        return true;
+
+    return (dynamic_cast<MovementAction*>(action) || dynamic_cast<CastReachTargetSpellAction*>(action) ||
+            name == "food" || name == "drink" || name == "open loot" || name == "loot" ||
+            (!PlayerbotAI::IsTank(ai->GetBot()) && (name == "pet attack" || IsDamagingAction(ai, action, name)))) &&
+        DcNaxx40LoathebTransit::IsCrossing(ai);
 }
 
 // A mob already beating on a non-tank party member is peeled at once: the
@@ -369,7 +383,8 @@ float DungeonClearMultiplier::GetValue(Action* action)
         DcNaxx40Thaddius::InExitTransition(botAI))
         return 0.0f;
 
-    if (InterruptsGluthTransit(botAI, bot, action, name) ||
+    if ((bot->GetMapId() == 533 && InterruptsLoathebTransit(botAI, action, name)) ||
+        InterruptsGluthTransit(botAI, bot, action, name) ||
         LeavesEmbalmingCamp(botAI, bot, action, name) || LeavesPatchwerkPosition(botAI, bot, action, name) ||
         (bot->GetMapId() == 533 && InterruptsSlimeEscape(*botAI, action, name)))
         return 0.0f;
@@ -610,7 +625,8 @@ float DungeonClearCombatMultiplier::GetValue(Action* action)
 
     std::string const& name = action->getName();
 
-    if (InterruptsGluthTransit(botAI, bot, action, name) ||
+    if ((bot->GetMapId() == 533 && InterruptsLoathebTransit(botAI, action, name)) ||
+        InterruptsGluthTransit(botAI, bot, action, name) ||
         LeavesEmbalmingCamp(botAI, bot, action, name) || LeavesPatchwerkPosition(botAI, bot, action, name) ||
         (bot->GetMapId() == 533 && InterruptsSlimeEscape(*botAI, action, name)))
         return 0.0f;

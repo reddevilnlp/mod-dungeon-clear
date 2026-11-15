@@ -141,6 +141,18 @@ struct DcRunState
     } naxx40GluthTransit;
     ObjectGuid naxx40GluthTransitOwner;
 
+    struct LoathebTransit
+    {
+        ObjectGuid group;
+        uint32 instanceId = 0;
+        uint32 started = 0;
+        uint32 lastUpdate = 0;
+        bool finished = false;
+    } naxx40LoathebTransit;
+    ObjectGuid naxx40LoathebTransitOwner;
+    uint32 naxx40LoathebMoveAttempt = 0;
+    uint32 naxx40LoathebSpline = 0;
+
     struct ThaddiusOpening
     {
         enum class Phase { Camp, Platforms, Pull };
@@ -1023,6 +1035,7 @@ struct DcRunState
     {
         if (naxx40GluthTransit.stopped)
             naxx40GluthTransit = {};
+        naxx40LoathebTransit.lastUpdate = 0;
         paused = false;
         pauseReason.clear();
         pausedDoor.Clear();
