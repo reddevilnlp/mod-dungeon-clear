@@ -249,6 +249,10 @@ struct ScriptedPullStage
     // forward to the aggro edge, back to the spot, forward again.
     bool bodyPull{false};
 
+    // The stand, any walk-in after a failed ranged tag, and the return must use
+    // complete dry paths inside the pack's floor band.
+    bool keepOnPackFloor{false};
+
     // WHICH member of the pack to tag: the one FURTHEST FROM THIS ANCHOR.
     //
     // The default ranks candidates by distance from the STAND SPOT and takes the

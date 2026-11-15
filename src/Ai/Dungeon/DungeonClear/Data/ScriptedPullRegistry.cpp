@@ -496,6 +496,17 @@ namespace
     // between the spawns and the cylinder's authored centre.
     float constexpr MGT_ROT_ZBAND  = 10.0f;
 
+    constexpr uint32 Naxx40HorsemenEntry = 351037;
+    constexpr uint32 Naxx40AcolytePullOrder = 5;
+
+    bool HorsemenAcolyteApproachClear(Player* tank, AiObjectContext* ctx)
+    {
+        static std::vector<uint32> const ghouls{351078};
+        static std::vector<ObjectGuid::LowType> const frontPack{361415, 361416, 361417, 361418};
+        return !DcTargeting::NearestHostileNearPoint(tank, ctx, 2581.0f, -3329.0f, 267.6f, 32.0f, 2.0f,
+            &ghouls, nullptr, ObjectGuid::Empty, nullptr, &frontPack);
+    }
+
     std::vector<ScriptedPullStage> const& Table()
     {
         static std::vector<ScriptedPullStage> const kStages = []
@@ -580,6 +591,33 @@ namespace
             // A surviving second Spewer may be beyond a 30-yard opener.
             spewers.bodyPull = true;
             t.push_back(spewers);
+
+            // The default walk-in fell to Z239 under the Acolytes. This stand
+            // has LOS to both spawns at 26yd and a dry MMap route to the camp.
+            ScriptedPullStage acolytes;
+            acolytes.mapId = 533;
+            acolytes.bossEntry = Naxx40HorsemenEntry;
+            acolytes.order = Naxx40AcolytePullOrder;
+            acolytes.name = "Naxx40 - Four Horsemen approach Acolytes";
+            acolytes.campX = 2607.0f;
+            acolytes.campY = -3326.2f;
+            acolytes.campZ = 267.67f;
+            acolytes.standX = 2556.9f;
+            acolytes.standY = -3300.8f;
+            acolytes.standZ = 267.593f;
+            acolytes.packX = 2556.44f;
+            acolytes.packY = -3277.40f;
+            acolytes.packZ = 267.68f;
+            acolytes.packRadius = 14.0f;
+            acolytes.packZBand = 2.0f;
+            acolytes.armX = 2588.0f;
+            acolytes.armY = -3315.0f;
+            acolytes.armZ = 267.6f;
+            acolytes.armRadius = 60.0f;
+            acolytes.entries = {351070};
+            acolytes.spawnIds = {361372, 361373};
+            acolytes.keepOnPackFloor = true;
+            t.push_back(acolytes);
 
             ScriptedPullStage east;
             east.mapId      = MGT_MAP;
@@ -918,6 +956,10 @@ ScriptedPullStage const* ScriptedPullRegistry::DueStage(Player* bot, AiObjectCon
              std::abs(bot->GetPositionZ() - s->campZ) > s->packZBand))
             continue;
         if (!InArmRange(*s, bot->GetPositionX(), bot->GetPositionY(), bot->GetPositionZ()))
+            continue;
+        if (s->bossEntry == Naxx40HorsemenEntry &&
+            (!IsNaxx40Map(bot->FindMap()) || std::abs(bot->GetPositionZ() - s->packZ) > s->packZBand ||
+             !HorsemenAcolyteApproachClear(bot, ctx)))
             continue;
         orders.push_back(s->order);
         live.push_back(NearestPackMember(bot, ctx, *s) != nullptr);

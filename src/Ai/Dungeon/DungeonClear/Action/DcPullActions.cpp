@@ -24,6 +24,7 @@
 #include "Log.h"
 #include "Map.h"
 #include "MotionMaster.h"
+#include "MoveSpline.h"
 #include "MoveSplineInitArgs.h"
 #include "ObjectAccessor.h"
 #include "PathGenerator.h"
@@ -52,6 +53,7 @@
 #include "Ai/Dungeon/DungeonClear/Util/DcNaxx40GluthTransit.h"
 #include "Ai/Dungeon/DungeonClear/Util/DcNaxx40Patchwerk.h"
 #include "Ai/Dungeon/DungeonClear/Util/DcNaxx40LivingPoison.h"
+#include "Ai/Dungeon/DungeonClear/Util/DcNaxx40SlimeCrossing.h"
 #include "Ai/Dungeon/DungeonClear/Util/DcRun.h"
 #include "Ai/Dungeon/DungeonClear/Util/NavmeshSnap.h"
 #include "Ai/Dungeon/DungeonClear/Util/DcPathWorker.h"
@@ -191,6 +193,27 @@ namespace
         ScriptedPullStage const* const stage =
             ScriptedPullRegistry::Find(bot->GetMapId(), pull.scriptedStage);
         return stage && stage->bodyPull;
+    }
+
+    ScriptedPullStage const* FloorBoundStage(Player& tank, DcPullContext const& pull)
+    {
+        ScriptedPullStage const* const stage = ScriptedPullRegistry::Find(tank.GetMapId(), pull.scriptedStage);
+        return stage && stage->keepOnPackFloor ? stage : nullptr;
+    }
+
+    bool DriveOnPackFloor(PlayerbotAI* ai, ScriptedPullStage const& stage, Position const& target)
+    {
+        Player* const tank = ai->GetBot();
+        G3D::Vector3 const end(target.GetPositionX(), target.GetPositionY(), target.GetPositionZ());
+        if (DcMovement::OwnsRunningEscort(tank) && (tank->movespline->FinalDestination() - end).squaredLength() < 1.0f)
+            return true;
+        Movement::PointsArray path = DcNaxx40SlimeCrossing::BuildDryCampPath(tank, target);
+        if (path.empty() || std::any_of(path.begin(), path.end(), [&stage](G3D::Vector3 const& point)
+            {
+                return std::abs(point.z - stage.packZ) > stage.packZBand;
+            }))
+            return false;
+        return DcMovement::SplinePath(ai, path, MovementPriority::MOVEMENT_COMBAT, FORCED_MOVEMENT_RUN);
     }
 
     uint32 DcPullLegTimeoutMs(DcPullContext const& pull, float legDist)
@@ -1279,6 +1302,8 @@ bool DungeonClearPullAction::Execute(Event /*event*/)
             if (DcNaxx40Patchwerk::IsPatrolPull(pull))
                 return DcNaxx40Patchwerk::DrivePatrolTag(botAI, context);
 
+            ScriptedPullStage const* const floorStage = FloorBoundStage(*bot, pull);
+
             // Tag the pack. The moment combat starts the non-combat trigger stops
             // firing and DungeonClearPullManeuverAction drags it back to camp.
             Unit* trash = next.has_value() ? DcTargeting::GetPullTarget(botAI) : nullptr;
@@ -1299,6 +1324,16 @@ bool DungeonClearPullAction::Execute(Event /*event*/)
             // out to the boss gets a proportionate watchdog (see DcPullLegTimeoutMs).
             if ((now - since) > DcPullLegTimeoutMs(pull, camp.GetExactDist(trash)))
             {
+                if (floorStage)
+                {
+                    DcMovement::StopBot(bot, DcMovement::Stop::HardPin);
+                    DcMovement::ClearMovementWait(bot);
+                    AbandonScriptedStage(pull);
+                    DcSetPullPhase(context, DcPullPhase::Idle);
+                    context->GetValue<ObjectGuid>(DcKey::PullTarget)->Reset();
+                    StallDungeonClear(botAI, "Four Horsemen: retrying the Acolyte pull on the upper floor.");
+                    return true;
+                }
                 if (pull.naxx40RangedStand && next && DcNaxx40Patchwerk::NoteSweepTagTimeout(bot, context, next->entry))
                 {
                     DcMovement::StopBot(bot, DcMovement::Stop::HardPin);
@@ -1405,10 +1440,16 @@ bool DungeonClearPullAction::Execute(Event /*event*/)
                 {
                     Position const stand(stage->standX, stage->standY, stage->standZ);
                     float const toStand = bot->GetExactDist(&stand);
-                    if (toStand > DC_PULL_CAMP_ARRIVE)
+                    if (toStand > (floorStage ? 1.0f : DC_PULL_CAMP_ARRIVE))
                     {
                         DC_PULL_TRACE("[DC:{}] scripted-pull: walking to the stand spot "
                                       "({:.1f}yd) before tagging", bot->GetName(), toStand);
+                        if (floorStage)
+                        {
+                            if (!DriveOnPackFloor(botAI, *floorStage, stand))
+                                StallDungeonClear(botAI, "Four Horsemen: waiting for a dry path to the Acolyte stand.");
+                            return true;
+                        }
                         bool const walked =
                             DcMoveTo(bot->GetMapId(), stand.GetPositionX(),
                                      stand.GetPositionY(), stand.GetPositionZ(),
@@ -1430,6 +1471,8 @@ bool DungeonClearPullAction::Execute(Event /*event*/)
                         // Arrived. Latch it — the leg is done, and on a body-pull row
                         // the tank is about to leave the spot on purpose.
                         pull.scriptedAtStandMs = now;
+                        if (floorStage)
+                            ClearStall(context);
                         DC_PULL_DEBUG("[DC:{}] scripted-pull: on the stand spot "
                                       "({:.1f}yd) -> taking the tag from here",
                                       bot->GetName(), toStand);
@@ -1703,6 +1746,16 @@ bool DungeonClearPullAction::Execute(Event /*event*/)
             if (pull.naxx40RangedStand)
             {
                 DcMovement::StopBot(bot, DcMovement::Stop::Hold);
+                return true;
+            }
+
+            if (floorStage)
+            {
+                // A missing opener or expired cast still gets a normal body tag,
+                // but toward the live target along the verified floor, without
+                // letting the generic aggro-edge projection aim under it.
+                if (!DriveOnPackFloor(botAI, *floorStage, trash->GetPosition()))
+                    StallDungeonClear(botAI, "Four Horsemen: waiting for a dry walk-in to the Acolytes.");
                 return true;
             }
 
@@ -3276,9 +3329,11 @@ bool DungeonClearPullManeuverAction::Execute(Event /*event*/)
     // combat chase/attack can't grab the tank and fight at the pack instead.
     DC_PULL_TRACE("[DC:{}] pull returning: {:.1f}yd to camp ({} ms into leg)",
                   bot->GetName(), dist, legElapsed);
+    ScriptedPullStage const* const floorStage = FloorBoundStage(*bot, pull);
     bool const moved = patchwerk ? DcNaxx40Patchwerk::DrivePatrolReturn(botAI)
         : embalming && pull.embalmingSurvivorStand ? DcNaxx40Embalming::DriveSurvivorReturn(botAI, camp)
         : pull.naxx40RangedStand && !embalming ? DcNaxx40Patchwerk::DriveSweepReturn(botAI, returnPoint)
+        : floorStage ? DriveOnPackFloor(botAI, *floorStage, returnPoint)
         : DcMoveTo(bot->GetMapId(), returnPoint.GetPositionX(), returnPoint.GetPositionY(), returnPoint.GetPositionZ(),
                    /*idle*/ false, /*react*/ false, /*normal_only*/ false,
                    /*exact_waypoint*/ false, MovementPriority::MOVEMENT_COMBAT);
