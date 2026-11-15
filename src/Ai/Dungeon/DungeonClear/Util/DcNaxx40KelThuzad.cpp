@@ -35,13 +35,16 @@ namespace
     // 35yd past the gate, and 75yd from the boss (proximity aggro starts at ~61yd).
     Position const InsideCamp(3673.0f, -5099.3f, 142.032f);
     Position const PullPoint(3696.0f, -5104.13f, 142.030f);
+    // Reach the inside of the gate on the generic corridor/breadcrumb path.
+    // The custom dry leg starts no farther west than x=3647, past gate x=3637.4.
+    constexpr float StagingRadius = 26.0f;
     constexpr float ArrivalRadius = 1.0f;
     constexpr float CampRadius = 8.0f;
 
     InstanceScript* OpeningInstance(Player const* player)
     {
         if (!player || !IsNaxx40Map(player->FindMap()) || player->IsInCombat() ||
-            player->GetExactDist(&InsideCamp) > 85.0f || player->GetPositionZ() < 138.0f ||
+            player->GetExactDist(&InsideCamp) > StagingRadius || player->GetPositionZ() < 138.0f ||
             player->GetPositionZ() > 149.0f)
             return nullptr;
         InstanceScript* instance = player->GetInstanceScript();
@@ -173,8 +176,8 @@ std::optional<bool> DcNaxx40KelThuzad::Stage(PlayerbotAI& ai, DungeonBossInfo co
 std::optional<bool> DcNaxx40KelThuzad::StageFollower(PlayerbotAI& ai, Player* leader)
 {
     Player* member = ai.GetBot();
-    if (!member || !leader || member->IsInCombat() || !member->IsInMap(leader) || !LeaderStages(leader) ||
-        DcRezRecovery::IsPending(leader))
+    if (!member || !leader || member->IsInCombat() || !member->IsInMap(leader) ||
+        member->GetExactDist(&InsideCamp) > StagingRadius || !LeaderStages(leader) || DcRezRecovery::IsPending(leader))
         return std::nullopt;
     InstanceScript* instance = leader->GetInstanceScript();
     if (!GateOpen(*instance) || member->GetExactDist(&InsideCamp) <= CampRadius)
@@ -188,7 +191,8 @@ std::optional<bool> DcNaxx40KelThuzad::StageFollower(PlayerbotAI& ai, Player* le
 bool DcNaxx40KelThuzad::OwnsMovement(PlayerbotAI& ai)
 {
     Player* player = ai.GetBot();
-    if (!player || !IsNaxx40Map(player->FindMap()) || player->IsInCombat())
+    if (!player || !IsNaxx40Map(player->FindMap()) || player->IsInCombat() ||
+        player->GetExactDist(&InsideCamp) > StagingRadius)
         return false;
     Player* leader = DcLeaderSignal::FindRunOwner(player);
     return leader && LeaderStages(leader) && !DcRezRecovery::IsPending(leader);
