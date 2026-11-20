@@ -797,6 +797,17 @@ void RegisterBlackwingLairRoster(std::vector<BossRosterPatch>& t)
                              /*completionFrom*/ DcBlackwingLair::NPC_RAZORGORE,
                              /*orderOverride*/ 0));
 
+    // Route to the camp before the tank tags Flamegor. Preserve his own kill
+    // bit and his place between Ebonroc and Chromaggus.
+    p.remove.push_back(DcBlackwingLair::NPC_FLAMEGOR);
+    p.add.push_back(MakeBoss(DcBlackwingLair::NPC_FLAMEGOR,
+                             DcBlackwingLair::MAP_ID, "Flamegor",
+                             DcBlackwingLair::FLAMEGOR_CAMP_X,
+                             DcBlackwingLair::FLAMEGOR_CAMP_Y,
+                             DcBlackwingLair::FLAMEGOR_CAMP_Z,
+                             /*completionFrom*/ DcBlackwingLair::NPC_FLAMEGOR,
+                             /*orderOverride*/ 6));
+
     // CHROMAGGUS MOVES OUT OF HIS CAGE. His derived anchor is his DB spawn
     // (-7515.34, -1029.62, 476.73) — a holding pen sealed behind the portcullis
     // the lever opens, and sitting directly above the z-449 Broodlord floor.
@@ -840,7 +851,7 @@ void RegisterBlackwingLairRoster(std::vector<BossRosterPatch>& t)
                                     /*orderOverride*/ 8));
 
     // instance_encounters 610-617, in their own order — the classic clear path.
-    // Chromaggus and Nefarian are absent because they are re-added above with
+    // Flamegor, Chromaggus and Nefarian are absent because they are re-added with
     // their order keys already stamped; `reorder` only touches entries that
     // survived the removal.
     p.reorder = {
@@ -849,7 +860,6 @@ void RegisterBlackwingLairRoster(std::vector<BossRosterPatch>& t)
         { 12017, 3 },  // Broodlord Lashlayer
         { 11983, 4 },  // Firemaw
         { 14601, 5 },  // Ebonroc
-        { 11981, 6 },  // Flamegor
     };
 
     t.push_back(std::move(p));

@@ -4,8 +4,12 @@
  */
 
 #include "gtest/gtest.h"
+#include "NavHarness.h"
+
+#include "MapDefines.h"
 
 #include <cmath>
+#include <cstdlib>
 
 #include "Ai/Dungeon/DungeonClear/Data/BossPullbackRegistry.h"
 #include "Ai/Dungeon/DungeonClear/Data/Events/DungeonEventTables.h"
@@ -14,7 +18,7 @@
 // Pull-back bosses (BossPullbackRegistry) — the "this boss must be fought
 // somewhere else" table.
 //
-// ONE ROW: Plugger Spazzring (9499, Blackrock Depths), dragged out past the Bar
+// Plugger Spazzring (9499, Blackrock Depths) is dragged out past the Bar
 // Door because his death turns the Grim Guzzler's patrons hostile. The first
 // row (Ghaz'an) was retired in S1593 once the cause was fixed upstream: he sat
 // in the lake only because a headless party never fired areatrigger 4302, the
@@ -75,6 +79,75 @@ TEST(DungeonClearBossPullbackTest, PluggerIsFoughtPastTheBarDoor)
         }
     }
     EXPECT_TRUE(found) << "Plugger's roster row must be re-anchored on the camp";
+}
+
+TEST(DungeonClearBossPullbackTest, FlamegorUsesTheCampAndKeepsHisEncounterCredit)
+{
+    namespace B = DcBlackwingLair;
+    BossPullback const* row = BossPullbackRegistry::Find(B::MAP_ID, B::NPC_FLAMEGOR);
+    ASSERT_NE(row, nullptr);
+    EXPECT_FLOAT_EQ(row->forceAggroRange, 0.0f);
+    EXPECT_FALSE(row->summonWhenStuckBelow);
+    EXPECT_EQ(BossPullbackRegistry::Find(B::MAP_ID, B::NPC_EBONROC), nullptr);
+
+    DungeonBossInfo base;
+    base.entry = B::NPC_FLAMEGOR;
+    base.mapId = B::MAP_ID;
+    base.encounterIndex = 5;
+    base.name = "Flamegor";
+    base.z = 477.17f;
+
+    auto const roster = BossRosterRegistry::Apply(
+        B::MAP_ID, DcDiffKey::Raid(RAID_DIFFICULTY_10MAN_NORMAL), {base});
+    unsigned flamegorCount = 0;
+    for (DungeonBossInfo const& boss : roster)
+    {
+        if (boss.entry != B::NPC_FLAMEGOR)
+            continue;
+        ++flamegorCount;
+        EXPECT_EQ(boss.kind, DungeonAnchorKind::Boss);
+        EXPECT_EQ(boss.encounterIndex, base.encounterIndex);
+        EXPECT_EQ(boss.orderOverride, 6);
+        EXPECT_FLOAT_EQ(boss.x, row->campX);
+        EXPECT_FLOAT_EQ(boss.y, row->campY);
+        EXPECT_FLOAT_EQ(boss.z, row->campZ);
+    }
+    EXPECT_EQ(flamegorCount, 1u);
+}
+
+TEST(DungeonClearBossPullbackTest, FlamegorCampIsReachableFromHisPatrol)
+{
+    namespace B = DcBlackwingLair;
+    char const* data = std::getenv("DC_PROBE_MMAPS");
+    if (!data || !*data)
+        GTEST_SKIP() << "set DC_PROBE_MMAPS to a directory containing mmaps/ for map 469";
+    auto const mesh = DcNavHarness::LoadMap(data, B::MAP_ID);
+    if (!mesh)
+        GTEST_SKIP() << "no Blackwing Lair navmesh under " << data;
+
+    BossPullback const* row = BossPullbackRegistry::Find(B::MAP_ID, B::NPC_FLAMEGOR);
+    ASSERT_NE(row, nullptr);
+    G3D::Vector3 ground;
+    ASSERT_TRUE(DcNavHarness::NearestPoint(mesh.get(), row->campX, row->campY, row->campZ,
+                                           2.0f, 2.0f, ground, NAV_GROUND));
+    EXPECT_NEAR(ground.z, row->campZ, 1.0f);
+
+    // Flamegor's position when engaged in the recorded upper-floor pull.
+    constexpr DcSpawnPoint contact{-7405.348f, -1015.982f, 477.165f};
+    // Keep the landing below and beyond the 18yd pull-back release radius from
+    // initial contact. An upper-floor camp could otherwise pass both route checks.
+    EXPECT_LT(ground.z, contact.z - 3.0f);
+    EXPECT_GT(std::hypot(ground.x - contact.x, ground.y - contact.y), 18.0f);
+    auto const out = DcNavHarness::Route(mesh.get(), B::MAP_ID,
+                                         row->campX, row->campY, row->campZ, contact.x, contact.y, contact.z);
+    auto const back = DcNavHarness::Route(mesh.get(), B::MAP_ID,
+                                          contact.x, contact.y, contact.z, row->campX, row->campY, row->campZ);
+    for (auto const* leg : {&out, &back})
+    {
+        EXPECT_TRUE(leg->reachable) << leg->failureReason;
+        EXPECT_TRUE(leg->corridorComplete);
+        EXPECT_FALSE(leg->startFarFromPoly);
+    }
 }
 
 TEST(DungeonClearBossPullbackTest, GhazanIsNoLongerPulledBack)

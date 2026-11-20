@@ -4,6 +4,7 @@
  */
 
 #include "BossPullbackRegistry.h"
+#include "Events/DungeonEventTables.h"
 
 #include <vector>
 
@@ -11,10 +12,7 @@ namespace
 {
     // ---- the table ------------------------------------------------------
     //
-    // ONE ROW: Plugger Spazzring (9499, Blackrock Depths 230). Before him it held
-    // exactly one row in its life — Ghaz'an (18105, The Underbog 546) — retired
-    // in S1593; see below. Adding a boss is a single entry here plus a matching
-    // BossRosterPatch anchor.
+    // Adding a boss takes one entry here and a matching BossRosterPatch anchor.
     //
     // WHY PLUGGER. It is not his ground that kills the party, it is his death:
     // his ON_DEATH SmartAI (9499 rows 9-12) sets faction 14 on every Grim,
@@ -84,6 +82,12 @@ namespace
             // normal way (his patrol starts when the party reaches the camp,
             // inside AT 2066). See DcBlackrockSpire::BEAST_CAMP_*.
             { 229, 10430, 60.0f, -540.0f, 111.0f, 0.0f, false },
+            // Blackwing Lair — Flamegor. Keep the raid on the lower landing
+            // while the tank tags on the upper floor so raid AoE stays away
+            // from the adjacent Wyrmguards during the pull.
+            { DcBlackwingLair::MAP_ID, DcBlackwingLair::NPC_FLAMEGOR,
+              DcBlackwingLair::FLAMEGOR_CAMP_X, DcBlackwingLair::FLAMEGOR_CAMP_Y,
+              DcBlackwingLair::FLAMEGOR_CAMP_Z, 0.0f, false },
             // Zul'Gurub — High Priestess Jeklik. Not a bad-ground row either: she
             // waits REACT_PASSIVE on a cave ledge 12yd above the floor that has no
             // navigable route, so the closest the tank gets is underneath it, out

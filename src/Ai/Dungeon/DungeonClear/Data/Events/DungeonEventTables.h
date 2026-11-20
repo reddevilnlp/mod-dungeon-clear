@@ -2550,6 +2550,12 @@ namespace DcBlackwingLair
     constexpr uint32 NPC_FLAMEGOR   = 11981;
     constexpr uint32 NPC_CHROMAGGUS = 14020;
 
+    // Flamegor's pull-back camp on the lower landing, out of sight of his patrol
+    // and the Wyrmguards above. The boss roster and pull-back use this same point.
+    constexpr float FLAMEGOR_CAMP_X = -7411.0f;
+    constexpr float FLAMEGOR_CAMP_Y = -983.0f;
+    constexpr float FLAMEGOR_CAMP_Z = 472.64f;
+
     // The four Corrupted Whelps (red / green / blue / bronze). Level 60 normals,
     // 4 578 HP, no AI and no script, MovementType 1 — they aggro on proximity,
     // individually, and they are back thirty seconds after they die. The
