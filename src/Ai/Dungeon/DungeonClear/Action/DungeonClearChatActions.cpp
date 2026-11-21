@@ -1180,14 +1180,15 @@ bool DcGoAction::Execute(Event event)
         return false;
     }
 
+    InstanceScript* inst = DcTargeting::GetInstanceScript(bot);
     if (matched->kind == DungeonAnchorKind::Objective &&
-        AI_VALUE(std::unordered_set<uint32>&, DcKey::ClearedAnchors).count(matched->entry))
+        (AI_VALUE(std::unordered_set<uint32>&, DcKey::ClearedAnchors).count(matched->entry) ||
+         DcAnchorDoneByInstanceScript(*matched, inst)))
     {
         DcRefuse(botAI, bot, "Objective " + matched->name + " is already done.");
         return false;
     }
 
-    InstanceScript* inst = DcTargeting::GetInstanceScript(bot);
     uint32 const completedMask = inst ? inst->GetCompletedEncounterMask() : 0u;
     if (matched->kind == DungeonAnchorKind::Boss &&
         matched->encounterIndex < 32 && (completedMask & (1u << matched->encounterIndex)))
