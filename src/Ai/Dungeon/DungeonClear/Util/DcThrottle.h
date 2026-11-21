@@ -121,6 +121,7 @@ enum class DcThrottle : uint8
                          // takes ~1s to read IN_PROGRESS)
 
     StationaryBossOpener, // retry floor for an encounter opener fired from a fixed point
+    StationaryBossOpenerNotice, // player-facing feedback while that opener is held
 
     Count
 };

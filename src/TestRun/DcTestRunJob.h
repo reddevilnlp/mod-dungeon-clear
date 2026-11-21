@@ -239,6 +239,7 @@ private:
         uint32 encounterIndex = 0;
         std::string name;
         bool isBoss = true;
+        uint32 preparesBossEntry = 0;
     };
 
     DcTestRunJob() = default;

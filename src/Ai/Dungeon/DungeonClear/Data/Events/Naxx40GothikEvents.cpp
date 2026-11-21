@@ -14,6 +14,7 @@
 #include "Ai/Dungeon/DungeonClear/Util/DcMovement.h"
 #include "Ai/Dungeon/DungeonClear/Util/DcRezRecovery.h"
 #include "Ai/Dungeon/DungeonClear/Util/DcRun.h"
+#include "Ai/Dungeon/DungeonClear/Util/DcStatusPublisher.h"
 
 #include "Creature.h"
 #include "Event.h"
@@ -56,15 +57,15 @@ namespace
         return bot->GetInstanceScript();
     }
 
-    bool LivingSideReady(Player* tank)
+    Player* OutsideLivingSide(Player* tank)
     {
         SealedEncounterRow const* room = SealedEncounterRegistry::Find(MapId, Entry);
         if (!room)
-            return false;
+            return tank;
 
         Group* group = tank->GetGroup();
         if (!group)
-            return true;
+            return nullptr;
 
         for (Group::MemberSlot const& slot : group->GetMemberSlots())
         {
@@ -74,9 +75,15 @@ namespace
             if (member->IsBeingTeleported() || !member->InSamePhase(tank) ||
                 !SealedEncounterRegistry::InSealedRoom(*room, member->GetPositionX(),
                     member->GetPositionY(), member->GetPositionZ()))
-                return false;
+                return member;
         }
-        return true;
+        return nullptr;
+    }
+
+    void ReportOpenerHold(PlayerbotAI* ai, AiObjectContext* context, std::string const& reason)
+    {
+        if (!DcRun::Of(context).Throttled(DcThrottle::StationaryBossOpenerNotice, 15000))
+            DcStatusPublisher::SendAddonMessage(ai, "CHAT\tGothik: " + reason);
     }
 
     Result ShootFromLivingSide(Player* tank, AiObjectContext* context, DungeonBossInfo const&)
@@ -101,8 +108,14 @@ namespace
             return Result::Running;
 
         DcMovement::StopBot(tank, DcMovement::Stop::HardPin);
-        if (DcCombatFlag::AnyPartyEngagement(tank) || DcRezRecovery::IsPending(tank) ||
-            !LivingSideReady(tank) || DcActionShared::PauseAtBoss(ai, boss, BossName, Event()))
+        if (DcCombatFlag::AnyPartyEngagement(tank) || DcRezRecovery::IsPending(tank))
+            return Result::Running;
+        if (Player* member = OutsideLivingSide(tank))
+        {
+            ReportOpenerHold(ai, context, "waiting for " + member->GetName() + " on the living-side floor.");
+            return Result::Running;
+        }
+        if (DcActionShared::PauseAtBoss(ai, boss, BossName, Event()))
             return Result::Running;
 
         if (DcRun::Of(context).Throttled(DcThrottle::StationaryBossOpener, 3000))
@@ -111,15 +124,17 @@ namespace
         auto const shot = DcActionShared::ResolveRangedWeaponPull(ai, tank);
         if (!shot || shot->spellId != Shoot)
         {
-            LOG_DEBUG("playerbots.dungeonclear", "[DC:{}] Gothik opener needs a bow, gun or crossbow with ammunition",
-                      tank->GetName());
+            ReportOpenerHold(ai, context, "the tank needs a bow, gun or crossbow and suitable ammunition.");
             return Result::Running;
         }
 
         float const distance = tank->GetExactDist(boss);
         if (!tank->IsValidAttackTarget(boss) || distance < shot->minRange ||
             distance > shot->maxRange || !tank->IsWithinLOSInMap(boss))
+        {
+            ReportOpenerHold(ai, context, "the balcony target is unavailable or outside the shot's range or line of sight.");
             return Result::Running;
+        }
 
         tank->SetSelection(boss->GetGUID());
         if (!tank->HasInArc(CAST_ANGLE_IN_FRONT, boss))
