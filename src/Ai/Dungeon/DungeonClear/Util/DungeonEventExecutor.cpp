@@ -279,7 +279,6 @@ namespace
 
         if (waiting.empty())
         {
-            prog.gameObjectUses.Consume(group->GetGUID(), instanceId, step.goEntry);
             LOG_INFO("playerbots.dungeonclear", "[DC:{}] GameObject {} transfer complete: {}/{} arrived",
                      owner->GetName(), step.goEntry, prog.transferMembers.size(), prog.transferMembers.size());
             return StepResult::Done;
@@ -1622,7 +1621,10 @@ EventDriveOutcome DungeonEventExecutor::Advance(DungeonEvent const& ev, DungeonE
     // stepStartMs is re-stamped on each Done. The high-water step index is the one
     // clock a rewind cannot forge — if it has not moved in this long, the event is
     // going nowhere no matter what the individual steps keep claiming.
-    if (!watchdogOwned && timeout > 0 &&
+    // A verified landing can finish a transfer after the operator has dealt
+    // with its stall. The source receipts have already been checked.
+    bool const verifiedTransfer = step.kind == EventStepKind::UseGameObjectForGroup && result == StepResult::Done;
+    if (!verifiedTransfer && !watchdogOwned && timeout > 0 &&
         static_cast<uint32>(nowMs - prog.progressMs) >= timeout * DC_EVENT_NO_PROGRESS_FACTOR)
         result = StepResult::Failed;
     else if (result == StepResult::Running)
@@ -1829,7 +1831,11 @@ EventDriveOutcome DungeonEventExecutor::Drive(Player* bot, AiObjectContext* cont
         }
     }
 
-    return Advance(ev, prog, result, now, defaultTimeoutMs);
+    uint32 const previousStep = prog.stepIndex;
+    EventDriveOutcome const outcome = Advance(ev, prog, result, now, defaultTimeoutMs);
+    if (prog.stepIndex > previousStep && active.kind == EventStepKind::UseGameObjectForGroup && bot->GetGroup())
+        prog.gameObjectUses.Consume(bot->GetGroup()->GetGUID(), bot->GetInstanceId(), active.goEntry);
+    return outcome;
 }
 
 DungeonEvent const* DungeonEventExecutor::FindDueConditionalEvent(Player* bot,
@@ -1981,7 +1987,9 @@ void DungeonEventExecutor::ObserveGroupGameObjectUse(Player* player, GameObject*
     if (!registered)
         return;
 
-    Player* owner = DcLeaderSignal::FindLeaderTank(player);
+    Player* owner = DcLeaderSignal::FindRunOwner(player);
+    if (!owner)
+        owner = DcLeaderSignal::FindLeaderTank(player);
     PlayerbotAI* ai = owner ? GET_PLAYERBOT_AI(owner) : nullptr;
     if (!ai || owner->GetGroup() != player->GetGroup() || !owner->IsInMap(player))
         return;
