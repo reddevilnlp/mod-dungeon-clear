@@ -13,6 +13,7 @@
 #include "PlayerbotAI.h"
 #include "Script/Playerbots.h"
 #include "Ai/Dungeon/DungeonClear/DcValueKeys.h"
+#include "Ai/Dungeon/DungeonClear/Data/DcNaxx40Gothik.h"
 #include "Ai/Dungeon/DungeonClear/Data/Events/DungeonEventTables.h"
 #include "Ai/Dungeon/DungeonClear/Util/DcChessBoard.h"
 #include "Ai/Dungeon/DungeonClear/Util/DcCombatPurge.h"
@@ -210,6 +211,8 @@ namespace
     }
 
     DcTargetExclusionRow const kRows[] = {
+        { DcNaxx40Gothik::MapId, DcNaxx40Gothik::Entry,
+          &DcNaxx40Gothik::AwaitingOpener, /*alsoTank*/ true },
         // Blackwing Lair — Razorgore the Untamed. Killing him before the last egg
         // breaks casts 20038 (Explosion) and instakills the raid, so phase-1
         // damage into him does not merely go to waste: it ends the run, and with

@@ -964,6 +964,36 @@ bool DungeonClearEngageTrashAction::Execute(Event /*event*/)
     return engaged;
 }
 
+bool DcActionShared::PauseAtBoss(PlayerbotAI* botAI, Creature* boss, std::string const& name, Event event)
+{
+    Player* bot = botAI->GetBot();
+    DcRunState& run = DcRun::Of(botAI);
+    DcWaitAtBossDecision::Inputs in;
+    in.enabled = DcSettings::GetBool(bot, "WaitAtBoss");
+    in.nextIsBoss = true;
+    in.paused = run.paused;
+    in.inCombat = bot->IsInCombat();
+    in.bossGuid = boss->GetGUID().GetRawValue();
+    in.lastWaitedGuid = run.waitedBossGuid.GetRawValue();
+    if (!DcWaitAtBossDecision::Decide(in).shouldAutoPause)
+        return false;
+
+    run.waitedBossGuid = boss->GetGUID();
+    run.paused = true;
+    run.pauseReason = "waiting at " + name + " \xE2\x80\x94 resume when ready";
+    run.pausedDoor = ObjectGuid::Empty;
+    if (MotionMaster* mm = bot->GetMotionMaster())
+        mm->Clear();
+    bot->StopMovingOnCurrentPos();
+    LOG_INFO("playerbots.dungeonclear",
+             "[DC:{}] wait-at-boss: holding at {} '{}' for the player's resume",
+             bot->GetName(), boss->GetGUID().ToString(), name);
+    DcStatusPublisher::SendAddonMessage(botAI, "CHAT\tWaiting at " + name +
+                                              " \xE2\x80\x94 hit Resume when your party is ready.");
+    botAI->DoSpecificAction("dc status", event, true);
+    return true;
+}
+
 bool DungeonClearEngageBossAction::Execute(Event event)
 {
     // Pause guard — same already-queued-action race as DungeonClearAdvanceAction.
@@ -1022,43 +1052,9 @@ bool DungeonClearEngageBossAction::Execute(Event event)
         return true;
     }
 
-    // Wait at Boss: hold here for the human's go-ahead instead of committing
-    // the pull. This is deliberately the LAST gate — the trigger already
-    // proved the standoff, the pre-clear, the door check and the between-pulls
-    // readiness (incl. the Smart Rest top-off), so a resume pulls instantly.
-    // Mirrors the door auto-pause: same paused flag, so the whole pause stack
-    // (driving-ladder gate, multiplier hold, follower peel-off, status panel,
-    // Resume button) applies unchanged. pausedDoor stays empty — this hold
-    // must never be auto-resumed by some door opening.
-    {
-        DcWaitAtBossDecision::Inputs in;
-        in.enabled = DcSettings::GetBool(bot, "WaitAtBoss");
-        in.nextIsBoss = next->kind == DungeonAnchorKind::Boss;
-        in.paused = DcRun::Of(context).paused;
-        in.inCombat = bot->IsInCombat();
-        in.bossGuid = boss->GetGUID().GetRawValue();
-        in.lastWaitedGuid = DcRun::Of(context).waitedBossGuid.GetRawValue();
-        if (DcWaitAtBossDecision::Decide(in).shouldAutoPause)
-        {
-            DcRunState& run = DcRun::Of(context);
-            run.waitedBossGuid = boss->GetGUID();
-            run.paused = true;
-            run.pauseReason =
-                "waiting at " + next->name + " \xE2\x80\x94 resume when ready";
-            run.pausedDoor = ObjectGuid::Empty;
-            if (MotionMaster* mm = bot->GetMotionMaster())
-                mm->Clear();
-            bot->StopMovingOnCurrentPos();
-            LOG_INFO("playerbots.dungeonclear",
-                     "[DC:{}] wait-at-boss: holding at {} '{}' for the player's resume",
-                     bot->GetName(), boss->GetGUID().ToString(), next->name);
-            DcStatusPublisher::SendAddonMessage(
-                botAI, "CHAT\tWaiting at " + next->name +
-                           " \xE2\x80\x94 hit Resume when your party is ready.");
-            botAI->DoSpecificAction("dc status", event, true);
-            return true;
-        }
-    }
+    // Let a prepared raid wait for the operator before committing the pull.
+    if (PauseAtBoss(botAI, boss, next->name, event))
+        return true;
 
     // VAELASTRASZ THE CORRUPT is opened by a GOSSIP, not by a pull, and until he
     // has answered it there is nothing here for this rung to do but hold.

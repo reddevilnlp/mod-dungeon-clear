@@ -1053,3 +1053,4 @@ AC_ADD_CONFIG_FILE("${CMAKE_CURRENT_LIST_DIR}/conf/mod_dungeon_clear.conf.dist")
 #    mound. Each gets a boss anchor on its trigger plus a repeatable event.)
 
 # Naxx40 roster ordering (Data/Events/Naxx40RosterOrder.cpp).
+# New source: Data/Events/Naxx40GothikEvents.cpp.

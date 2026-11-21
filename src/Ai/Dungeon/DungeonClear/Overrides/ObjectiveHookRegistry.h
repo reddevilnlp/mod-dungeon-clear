@@ -199,6 +199,7 @@ void RegisterTrialOfTheChampionHooks(ObjectiveHookRegistry::HookTable& out);
 // Eregos hold's telemetry (39). See OculusDriver.cpp. Its decisions are the pure
 // kernel Util/DcOculusDriverDecision.h; each member flies its own drake from the
 // rider rung (Action/DcOculusRiderAction.cpp).
+void RegisterNaxx40GothikHooks(ObjectiveHookRegistry::HookTable& out);
 void RegisterOculusHooks(ObjectiveHookRegistry::HookTable& out);
 
 // Karazhan (map 532) — the chess event: arm the conductor (43) and report its

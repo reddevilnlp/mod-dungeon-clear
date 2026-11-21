@@ -19,6 +19,8 @@
 
 #include "Define.h"
 
+class Creature;
+class Event;
 class PlayerbotAI;
 class Player;
 class Unit;
@@ -146,6 +148,10 @@ namespace DcActionShared
     // Resolve the per-class pull opener to a spell id the TANK has trained, or
     // nullopt. Used by the engage walk-in (EngageDirect) and the advanced pull.
     std::optional<ResolvedPullSpell> ResolvePullSpell(PlayerbotAI* botAI, Player* bot);
+    std::optional<ResolvedPullSpell> ResolveRangedWeaponPull(PlayerbotAI* botAI, Player* bot);
+
+    // Apply the normal per-boss WaitAtBoss pause to an encounter opener.
+    bool PauseAtBoss(PlayerbotAI* botAI, Creature* boss, std::string const& name, Event event);
 
     // The one success reason: DisableDungeonClear called with exactly this
     // string means the run ended because every boss died. Shared so the

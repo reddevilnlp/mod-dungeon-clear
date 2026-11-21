@@ -76,6 +76,7 @@ namespace
             RegisterHallsOfReflectionRoster(t);
             RegisterCullingOfStratholmeRoster(t);
             RegisterTrialOfTheChampionRoster(t);
+            RegisterNaxx40GothikRoster(t);
             RegisterOculusRoster(t);
             RegisterKarazhanRoster(t);
             return t;

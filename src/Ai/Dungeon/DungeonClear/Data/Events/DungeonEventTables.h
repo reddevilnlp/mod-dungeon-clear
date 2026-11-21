@@ -5623,6 +5623,9 @@ namespace DcOculus
 // conditional flight driver. See OculusEvents.cpp.
 void RegisterOculusEvents(std::vector<DungeonEvent>& out);
 
+void RegisterNaxx40GothikEvents(std::vector<DungeonEvent>& out);
+void RegisterNaxx40GothikRoster(std::vector<BossRosterPatch>& out);
+
 // Karazhan (map 532) — the numbers the roster, the event rows, the hooks and the
 // gtests share. The reasoning is in KarazhanEvents.cpp.
 //

@@ -1294,6 +1294,8 @@ TEST(DungeonEventIntegrityTest, StepsOwnMovementIsConfinedToVettedEvents)
 {
     struct Row { uint32 mapId; uint32 eventId; };
     static constexpr Row kVetted[] = {
+        // The native MoveTo reaches the exact ranged shot point before the raid muster.
+        {533, 53320},
         // Black Morass "Defend Medivh": hook 8 walks the tank into Medivh's 20yd
         // start trigger and holds the Medivh-side hold point, both through the
         // long-haul spline funnel (the portals and the hold point are 80-102yd
@@ -2566,4 +2568,18 @@ TEST(DungeonEventIntegrityTest, OffMeshChainSpacingIsBounded)
             EXPECT_TRUE(ev.persistent) << ev.name;
         }
     }
+}
+
+TEST(DungeonEventIntegrityTest, Naxx40GothikPreparesBeforeShooting)
+{
+    DungeonEvent const* event = DungeonEventRegistry::Find(533, 53320);
+    ASSERT_NE(event, nullptr);
+    EXPECT_EQ(event->activation, EventActivation::Anchored);
+    EXPECT_TRUE(event->persistent);
+    ASSERT_EQ(event->steps.size(), 3u);
+    EXPECT_EQ(event->steps[0].kind, EventStepKind::MoveTo);
+    EXPECT_FLOAT_EQ(event->steps[0].radius, 1.5f);
+    EXPECT_EQ(event->steps[1].hookId, DC_HOOK_RAID_MUSTER);
+    EXPECT_EQ(event->steps[2].kind, EventStepKind::Custom);
+    EXPECT_TRUE(ObjectiveHookRegistry::Has(event->steps[2].hookId));
 }

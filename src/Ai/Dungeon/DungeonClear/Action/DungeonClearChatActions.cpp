@@ -26,6 +26,7 @@
 #include "Ai/Dungeon/DungeonClear/Data/RoomAggroRegistry.h"
 #include "Ai/Dungeon/DungeonClear/Data/DungeonWingRegistry.h"
 #include "Ai/Dungeon/DungeonClear/Util/ChunkedPathfinder.h"
+#include "Ai/Dungeon/DungeonClear/Util/DcAnchorDone.h"
 #include "Ai/Dungeon/DungeonClear/Util/DcPlayerbotCompat.h"
 #include "Ai/Dungeon/DungeonClear/Util/DcRezRecovery.h"
 #include "Ai/Dungeon/DungeonClear/Util/DcRunWing.h"
@@ -515,6 +516,8 @@ bool DcSkipAction::Execute(Event event)
     std::unordered_set<uint32>& skipped =
         context->GetValue<std::unordered_set<uint32>&>(DcKey::Skipped)->Get();
     skipped.insert(current->entry);
+    if (current->preparesBossEntry)
+        skipped.insert(current->preparesBossEntry);
 
     // New target gets a clean slate (abort any in-flight pull on the old target).
     ResetPullTransient(context);
@@ -804,7 +807,7 @@ bool DcBossesAction::Execute(Event event)
         if (info.kind == DungeonAnchorKind::Objective)
         {
             std::string const objStatus =
-                cleared.count(info.entry) ? "dead"
+                (cleared.count(info.entry) || DcAnchorDoneByInstanceScript(info, inst)) ? "dead"
                 : skipped.count(info.entry) ? "skipped"
                                             : "alive";
             std::string const objName = "Objective: " + info.name;
@@ -853,7 +856,7 @@ bool DcBossesAction::Execute(Event event)
         // missing — was seen alive earlier, is now gone, and was not killed
         // skipped — user/AI chose to pass it by (only while it's still alive)
         std::string statusStr;
-        if (killed || corpseOnMap)
+        if (killed || corpseOnMap || DcAnchorDoneByInstanceScript(info, inst))
             statusStr = "dead";
         else if (skipped.count(info.entry))
             statusStr = "skipped";
@@ -1219,7 +1222,18 @@ bool DcGoAction::Execute(Event event)
         context->GetValue<std::unordered_set<uint32>&>(DcKey::Skipped)->Get();
     skipped.erase(matched->entry);
 
-    DcRun::Of(context).selectedBossEntry = matched->entry;
+    uint32 destination = matched->entry;
+    if (matched->kind == DungeonAnchorKind::Boss)
+        for (DungeonBossInfo const& objective : bosses)
+            if (objective.preparesBossEntry == matched->entry &&
+                !AI_VALUE(std::unordered_set<uint32>&, DcKey::ClearedAnchors).count(objective.entry) &&
+                !DcAnchorDoneByInstanceScript(objective, inst))
+            {
+                skipped.erase(objective.entry);
+                destination = objective.entry;
+                break;
+            }
+    DcRun::Of(context).selectedBossEntry = destination;
 
     // Explicitly targeting a boss is a "go now" intent — clear any pause so the
     // tank actually starts moving toward it instead of holding.
