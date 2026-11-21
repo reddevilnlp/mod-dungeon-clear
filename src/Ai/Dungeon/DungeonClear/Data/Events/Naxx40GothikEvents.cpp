@@ -42,7 +42,6 @@ namespace
     constexpr int32 PreparationOrder = 65;
     constexpr uint32 Shoot = 3018;
     constexpr char BossName[] = "Gothik the Harvester";
-    constexpr char PreparationName[] = "Gothik living-side preparation";
 
     // The raid stays on the dry living-side floor below the balcony.
     constexpr float PullX = 2659.0f;
@@ -158,7 +157,7 @@ bool DcNaxx40Gothik::AwaitingOpener(Player* bot)
 
 void RegisterNaxx40GothikEvents(std::vector<DungeonEvent>& out)
 {
-    out.push_back(EventBuilder(533, GOTHIK_PREP_EVENT, PreparationName)
+    out.push_back(EventBuilder(533, GOTHIK_PREP_EVENT, "Gothik living-side preparation")
         .Anchored(PreparationOrder)
         .ForDifficulty(DcDiffKey::Raid(2))
         .Persistent()
@@ -176,7 +175,7 @@ void RegisterNaxx40GothikRoster(std::vector<BossRosterPatch>& out)
     patch.mapId = 533;
     patch.exactDifficulty = DcDiffKey::Raid(2);
     DungeonBossInfo preparation = DcRoster::MakeObjective(
-        DcRoster::OBJ(20), 7, 533, PreparationName,
+        DcRoster::OBJ(20), 7, 533, "Gothik living-side preparation",
         PullX, PullY, PullZ, 5.0f, 0, 0, GOTHIK_PREP_EVENT, PreparationOrder);
     preparation.doneBossStateIndex = BossSlot;
     preparation.preparesBossEntry = Entry;

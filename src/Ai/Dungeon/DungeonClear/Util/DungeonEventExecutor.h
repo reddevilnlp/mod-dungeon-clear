@@ -7,6 +7,8 @@
 #define _PLAYERBOT_DUNGEONEVENTEXECUTOR_H
 
 #include <algorithm>
+#include <utility>
+#include <vector>
 
 #include "Common.h"
 #include "ObjectGuid.h"

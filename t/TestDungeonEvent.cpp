@@ -2076,8 +2076,8 @@ TEST(DcLyceumCloseUpTest, TheRoomIsTheLyceumBoxAndBothAnchorsAreInIt)
 TEST(DungeonEventTransferTest, ReceiptsSurviveAnEventStartAndStayWithTheirSource)
 {
     DungeonEventProgress progress;
-    ObjectGuid const group(42);
-    ObjectGuid const member(17);
+    ObjectGuid const group(uint64{42});
+    ObjectGuid const member(uint64{17});
     progress.gameObjectUses.Record(group, 4, 181575, member);
     progress.gameObjectUses.Record(group, 4, 181577, member);
     progress.Reset();
@@ -2085,13 +2085,28 @@ TEST(DungeonEventTransferTest, ReceiptsSurviveAnEventStartAndStayWithTheirSource
 
     EXPECT_TRUE(progress.gameObjectUses.Contains(group, 4, 181575, member));
     EXPECT_FALSE(progress.gameObjectUses.Contains(group, 4, 181576, member));
-    EXPECT_FALSE(progress.gameObjectUses.Contains(group, 4, 181575, ObjectGuid(18)));
+    EXPECT_FALSE(progress.gameObjectUses.Contains(group, 4, 181575, ObjectGuid(uint64{18})));
     EXPECT_FALSE(progress.gameObjectUses.Contains(group, 5, 181575, member));
-    EXPECT_FALSE(progress.gameObjectUses.Contains(ObjectGuid(43), 4, 181575, member));
+    EXPECT_FALSE(progress.gameObjectUses.Contains(ObjectGuid(uint64{43}), 4, 181575, member));
 
     progress.gameObjectUses.Consume(group, 4, 181575);
     EXPECT_FALSE(progress.gameObjectUses.Contains(group, 4, 181575, member));
     EXPECT_TRUE(progress.gameObjectUses.Contains(group, 4, 181577, member));
     progress.gameObjectUses.Record(group, 5, 181575, member);
     EXPECT_FALSE(progress.gameObjectUses.Contains(group, 4, 181577, member));
+}
+
+TEST(DungeonEventTransferTest, AConfirmedLandingCanClearAnEarlierTimeout)
+{
+    DungeonEvent const event = EventBuilder(533, 53301, "Group transfer")
+        .Anchored(25)
+        .UseGOForGroup(181575, 1.0f, 2.0f, 3.0f, 4.0f, 5.0f, 6.0f, 12.0f)
+            .Timeout(1000)
+        .Build();
+    DungeonEventProgress progress;
+    progress.BeginEvent(event.id, 1000);
+    EXPECT_EQ(DungeonEventExecutor::Advance(event, progress, StepResult::Running, 5000, 30000),
+              EventDriveOutcome::Stalled);
+    EXPECT_EQ(DungeonEventExecutor::Advance(event, progress, StepResult::Done, 5001, 30000),
+              EventDriveOutcome::Completed);
 }
