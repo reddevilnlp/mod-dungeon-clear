@@ -2072,3 +2072,26 @@ TEST(DcLyceumCloseUpTest, TheRoomIsTheLyceumBoxAndBothAnchorsAreInIt)
     // The fight rule is tighter than the walking one.
     EXPECT_LT(DcLyceumCloseUp::LEASH, B::LYCEUM_PACK_LEASH);
 }
+
+TEST(DungeonEventTransferTest, ReceiptsSurviveAnEventStartAndStayWithTheirSource)
+{
+    DungeonEventProgress progress;
+    ObjectGuid const group(42);
+    ObjectGuid const member(17);
+    progress.gameObjectUses.Record(group, 4, 181575, member);
+    progress.gameObjectUses.Record(group, 4, 181577, member);
+    progress.Reset();
+    progress.BeginEvent(53301, 1000);
+
+    EXPECT_TRUE(progress.gameObjectUses.Contains(group, 4, 181575, member));
+    EXPECT_FALSE(progress.gameObjectUses.Contains(group, 4, 181576, member));
+    EXPECT_FALSE(progress.gameObjectUses.Contains(group, 4, 181575, ObjectGuid(18)));
+    EXPECT_FALSE(progress.gameObjectUses.Contains(group, 5, 181575, member));
+    EXPECT_FALSE(progress.gameObjectUses.Contains(ObjectGuid(43), 4, 181575, member));
+
+    progress.gameObjectUses.Consume(group, 4, 181575);
+    EXPECT_FALSE(progress.gameObjectUses.Contains(group, 4, 181575, member));
+    EXPECT_TRUE(progress.gameObjectUses.Contains(group, 4, 181577, member));
+    progress.gameObjectUses.Record(group, 5, 181575, member);
+    EXPECT_FALSE(progress.gameObjectUses.Contains(group, 4, 181577, member));
+}

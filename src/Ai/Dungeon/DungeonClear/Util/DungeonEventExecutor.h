@@ -6,6 +6,8 @@
 #ifndef _PLAYERBOT_DUNGEONEVENTEXECUTOR_H
 #define _PLAYERBOT_DUNGEONEVENTEXECUTOR_H
 
+#include <algorithm>
+
 #include "Common.h"
 #include "ObjectGuid.h"
 #include "Ai/Dungeon/DungeonClear/Data/DungeonEventRegistry.h"
@@ -38,10 +40,37 @@ enum class EventDriveOutcome : uint8
 // Per-run progress through one event, owned by a DungeonClear value (leader-
 // keyed). Self-healing: when a different event starts (eventId mismatch) Drive
 // resets it, so a stale value from a prior run is harmless.
-struct GameObjectTransferMember
+class DcGameObjectUseReceipts
 {
-    ObjectGuid guid;
-    bool observedUseFromSource{false};
+public:
+    void Record(ObjectGuid group, uint32 instance, uint32 entry, ObjectGuid user)
+    {
+        if (_group != group || _instance != instance)
+        {
+            _group = group;
+            _instance = instance;
+            _uses.clear();
+        }
+        if (!Contains(group, instance, entry, user))
+            _uses.emplace_back(entry, user);
+    }
+
+    bool Contains(ObjectGuid group, uint32 instance, uint32 entry, ObjectGuid user) const
+    {
+        return _group == group && _instance == instance &&
+            std::find(_uses.begin(), _uses.end(), std::pair{entry, user}) != _uses.end();
+    }
+
+    void Consume(ObjectGuid group, uint32 instance, uint32 entry)
+    {
+        if (_group == group && _instance == instance)
+            std::erase_if(_uses, [entry](auto const& use) { return use.first == entry; });
+    }
+
+private:
+    ObjectGuid _group;
+    uint32 _instance{0};
+    std::vector<std::pair<uint32, ObjectGuid>> _uses;
 };
 
 struct DungeonEventProgress
@@ -98,8 +127,11 @@ struct DungeonEventProgress
     // Original roster for a multi-member GameObject transfer. The landing
     // is checked live so a click or pending teleport never counts as arrival.
     ObjectGuid transferGroup;
-    std::vector<GameObjectTransferMember> transferMembers;
+    std::vector<ObjectGuid> transferMembers;
     uint32 transferAttemptMs{0};
+    // The core can accept a click before this event becomes the active step.
+    // Scope receipts to their group and instance, independent of step resets.
+    DcGameObjectUseReceipts gameObjectUses;
 
     // Drive-log throttle: the per-tick step line is logged only on a transition
     // (step or result change) or every kLogHeartbeatMs while Running, so a long
@@ -164,6 +196,9 @@ public:
     // The current anchored transfer owns participant movement while on this
     // step. Followers and recovery must leave its source and landing alone.
     static bool OwnsGameObjectTransfer(Player* owner);
+
+    // Record the core's native Use before this step starts or while it runs.
+    static void ObserveGroupGameObjectUse(Player* player, GameObject* go);
 
     // A live roster prerequisite applies to both automatic and manual selection.
     static bool CanSelectObjective(Player* bot, AiObjectContext* context, DungeonBossInfo const& anchor);

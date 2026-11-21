@@ -51,6 +51,7 @@
 
 #include "ScriptMgr.h"
 #include "AllCreatureScript.h"
+#include "AllGameObjectScript.h"
 #include "Cell.h"
 #include "CellImpl.h"
 #include "Creature.h"
@@ -91,6 +92,7 @@
 #include "Util/DcProvisionBudget.h"
 #include "Util/DcSpectator.h"
 #include "Ai/Dungeon/DungeonClear/Settings/DcSettings.h"
+#include "Ai/Dungeon/DungeonClear/Util/DungeonEventExecutor.h"
 #include "Ai/Dungeon/DungeonClear/DungeonClearActionContext.h"
 #include "Ai/Dungeon/DungeonClear/DungeonClearStrategyContext.h"
 #include "Ai/Dungeon/DungeonClear/DungeonClearTriggerContext.h"
@@ -899,8 +901,23 @@ public:
     }
 };
 
+class DungeonClearGameObjectTransferScript : public AllGameObjectScript
+{
+public:
+    DungeonClearGameObjectTransferScript() : AllGameObjectScript("DungeonClearGameObjectTransferScript") { }
+
+    bool CanGameObjectGossipHello(Player* player, GameObject* go) override
+    {
+        // GameObject::Use invokes this before dispatching the native effect.
+        if (DcModule::IsEnabled())
+            DungeonEventExecutor::ObserveGroupGameObjectUse(player, go);
+        return false;
+    }
+};
+
 void AddSC_dungeon_clear_module()
 {
+    new DungeonClearGameObjectTransferScript();
     new DungeonClearRegistrarWorldScript();
     new DungeonClearLoginPlayerScript();
     new DungeonClearTestRunLootScript();
