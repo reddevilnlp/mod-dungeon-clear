@@ -622,6 +622,7 @@ namespace
             RegisterTrialOfTheChampionEvents(t);
             RegisterOculusEvents(t);
             RegisterKarazhanEvents(t);
+            RegisterNaxx40HorsemenEvents(t);
             return t;
         }();
         return kEvents;

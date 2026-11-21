@@ -2567,3 +2567,76 @@ TEST(DungeonEventIntegrityTest, OffMeshChainSpacingIsBounded)
         }
     }
 }
+
+TEST(DungeonEventNaxx40Horsemen, RegistersOnlyInTheFortyPlayerRaid)
+{
+    constexpr uint32 mapId = 533;
+    constexpr uint32 eventId = 200;
+    DungeonBossInfo gothik;
+    gothik.mapId = mapId;
+    gothik.entry = 351035;
+    gothik.encounterIndex = 7;
+    DungeonBossInfo patchwerk = gothik;
+    patchwerk.entry = 351028;
+    patchwerk.encounterIndex = 9;
+    std::vector<DungeonBossInfo> const base = {gothik, patchwerk};
+
+    for (DcDiffKey const difficulty : {DcDiffKey::Raid(0), DcDiffKey::Raid(1),
+                                      DcDiffKey::Raid(3), DcDiffKey::Dungeon(2)})
+    {
+        EXPECT_EQ(DungeonEventRegistry::Find(mapId, eventId, difficulty), nullptr);
+        auto const unmodified = BossRosterRegistry::Apply(mapId, difficulty, base);
+        ASSERT_EQ(unmodified.size(), base.size());
+        EXPECT_EQ(BossOrderKey(unmodified.front()), 7u);
+        EXPECT_EQ(BossOrderKey(unmodified.back()), 9u);
+    }
+
+    auto const roster = BossRosterRegistry::Apply(mapId, DcDiffKey::Raid(2), base);
+    auto const findEntry = [&roster](uint32 entry)
+    {
+        return std::find_if(roster.begin(), roster.end(),
+                            [entry](DungeonBossInfo const& boss) { return boss.entry == entry; });
+    };
+    auto const gothikAnchor = findEntry(gothik.entry);
+    auto const horsemenAnchor = findEntry(BossRosterRegistry::ObjectiveEntry(eventId));
+    auto const patchwerkAnchor = findEntry(patchwerk.entry);
+    ASSERT_NE(gothikAnchor, roster.end());
+    ASSERT_NE(horsemenAnchor, roster.end());
+    ASSERT_NE(patchwerkAnchor, roster.end());
+    EXPECT_LT(gothikAnchor, horsemenAnchor);
+    EXPECT_LT(horsemenAnchor, patchwerkAnchor);
+    EXPECT_EQ(gothikAnchor->encounterIndex, 7u);
+    EXPECT_EQ(patchwerkAnchor->encounterIndex, 9u);
+    DungeonBossInfo const& horsemen = *horsemenAnchor;
+    EXPECT_EQ(BossOrderKey(horsemen), 80u);
+    EXPECT_EQ(horsemen.encounterIndex, 8u);
+    EXPECT_EQ(horsemen.kind, DungeonAnchorKind::Objective);
+    EXPECT_EQ(horsemen.entry, BossRosterRegistry::ObjectiveEntry(eventId));
+    EXPECT_EQ(horsemen.eventId, eventId);
+    EXPECT_EQ(horsemen.doneBossStateIndex, 12);
+    EXPECT_EQ(AnchorDoneByInstanceValues(horsemen, 1, 0), DcAnchorDoneVia::None);
+    EXPECT_EQ(AnchorDoneByInstanceValues(horsemen, 3, 0), DcAnchorDoneVia::BossState);
+}
+
+TEST(DungeonEventNaxx40Horsemen, RequiresTheWholeFightAfterEngagingMograine)
+{
+    auto const* event = DungeonEventRegistry::Find(533, 200, DcDiffKey::Raid(2));
+    ASSERT_NE(event, nullptr);
+    EXPECT_EQ(event->activation, EventActivation::Anchored);
+    EXPECT_TRUE(event->persistent);
+    EXPECT_TRUE(event->required);
+    ASSERT_EQ(event->steps.size(), 3u);
+    EXPECT_EQ(event->steps.front().hookId, DC_HOOK_RAID_MUSTER);
+    EXPECT_EQ(event->steps[1].kind, EventStepKind::KillCreature);
+    EXPECT_EQ(event->steps[1].creatureEntry, 351037u);
+    EXPECT_TRUE(event->steps[1].engage);
+    EventStep const& hold = event->steps.back();
+    EXPECT_EQ(hold.kind, EventStepKind::MoveTo);
+    EXPECT_EQ(hold.bossStateId, 12);
+    EXPECT_EQ(DecideBossStateGate(1, hold.bossStateClearMask, hold.restartOnBossStateMask),
+              BossStateGateVerdict::Hold);
+    EXPECT_EQ(DecideBossStateGate(2, hold.bossStateClearMask, hold.restartOnBossStateMask),
+              BossStateGateVerdict::Restart);
+    EXPECT_EQ(DecideBossStateGate(3, hold.bossStateClearMask, hold.restartOnBossStateMask),
+              BossStateGateVerdict::Clear);
+}
