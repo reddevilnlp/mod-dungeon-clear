@@ -37,7 +37,7 @@ void RegisterNaxx40HorsemenEvents(std::vector<DungeonEvent>& out)
             .ForDifficulty(DcDiffKey::Raid(NAXX40_DIFFICULTY))
             .Persistent()
             .Custom(DC_HOOK_RAID_MUSTER)
-                .Timeout(240000)
+                .Timeout(1260000)
             .KillCreatureEngage(HIGHLORD_MOGRAINE, 1, 80.0f)
             .MoveToHoldUntilBossState(STAGE_X, STAGE_Y, STAGE_Z, STAGE_RADIUS,
                                       HORSEMEN_BOSS_STATE, DcBossStateBit(DONE))
