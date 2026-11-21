@@ -26,6 +26,7 @@
 #include "Ai/Dungeon/DungeonClear/Data/RoomAggroRegistry.h"
 #include "Ai/Dungeon/DungeonClear/Data/DungeonWingRegistry.h"
 #include "Ai/Dungeon/DungeonClear/Util/ChunkedPathfinder.h"
+#include "Ai/Dungeon/DungeonClear/Util/DcAnchorDone.h"
 #include "Ai/Dungeon/DungeonClear/Util/DcPlayerbotCompat.h"
 #include "Ai/Dungeon/DungeonClear/Util/DcRezRecovery.h"
 #include "Ai/Dungeon/DungeonClear/Util/DcRunWing.h"
@@ -804,7 +805,7 @@ bool DcBossesAction::Execute(Event event)
         if (info.kind == DungeonAnchorKind::Objective)
         {
             std::string const objStatus =
-                cleared.count(info.entry) ? "dead"
+                (cleared.count(info.entry) || DcAnchorDoneByInstanceScript(info, inst)) ? "dead"
                 : skipped.count(info.entry) ? "skipped"
                                             : "alive";
             std::string const objName = "Objective: " + info.name;
@@ -853,7 +854,7 @@ bool DcBossesAction::Execute(Event event)
         // missing — was seen alive earlier, is now gone, and was not killed
         // skipped — user/AI chose to pass it by (only while it's still alive)
         std::string statusStr;
-        if (killed || corpseOnMap)
+        if (killed || corpseOnMap || DcAnchorDoneByInstanceScript(info, inst))
             statusStr = "dead";
         else if (skipped.count(info.entry))
             statusStr = "skipped";

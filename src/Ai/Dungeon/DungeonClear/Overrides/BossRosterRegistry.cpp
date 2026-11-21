@@ -78,6 +78,7 @@ namespace
             RegisterTrialOfTheChampionRoster(t);
             RegisterOculusRoster(t);
             RegisterKarazhanRoster(t);
+            RegisterNaxx40HorsemenRoster(t);
             return t;
         }();
         return kPatches;

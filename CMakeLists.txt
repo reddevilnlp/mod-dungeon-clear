@@ -15,6 +15,8 @@
 
 AC_ADD_SCRIPT("${CMAKE_CURRENT_LIST_DIR}/src")
 
+# New file: Data/Events/Naxx40HorsemenEvents.cpp (Naxxramas 40 roster and anchor).
+
 # New files added: Data/HealLeashRegistry.{h,cpp}
 #   (per-map camp leash for the healer LOS reposition — Karazhan's Banquet Hall,
 #    where healers chasing DPS onto the ballroom floor aggroed idle packs.)
