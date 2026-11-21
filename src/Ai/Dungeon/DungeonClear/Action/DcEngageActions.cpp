@@ -2303,7 +2303,7 @@ bool DcObjectiveArriveAction::Execute(Event /*event*/)
                 }
             }
             if (step.kind == EventStepKind::UseGameObjectForGroup &&
-                prog.transferMembers.empty() &&
+                (prog.eventId != ev->id || prog.transferMembers.empty()) &&
                 (AI_VALUE(bool, DcKey::Stock::HasAvailableLoot) ||
                  AI_VALUE(bool, DcKey::Stock::CanLoot) || DcPartyState::IsAnyPartyMemberLooting(bot) ||
                  DcRezRecovery::IsPending(bot)))

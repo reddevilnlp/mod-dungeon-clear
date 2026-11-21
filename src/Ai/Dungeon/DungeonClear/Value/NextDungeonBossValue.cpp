@@ -158,7 +158,8 @@ std::optional<DungeonBossInfo> NextDungeonBossValue::Calculate()
                 else if (info.kind == DungeonAnchorKind::Boss &&
                          info.encounterIndex < 32 && (completedMask & (1u << info.encounterIndex)))
                     invalid = true;
-                else if (DcAnchorDoneByInstanceScript(info, inst))
+                else if (DcAnchorDoneByInstanceScript(info, inst) ||
+                         !DungeonEventExecutor::CanSelectObjective(bot, context, info))
                     invalid = true;
 
                 if (!invalid)
@@ -245,15 +246,8 @@ std::optional<DungeonBossInfo> NextDungeonBossValue::Calculate()
         if (DcAnchorDoneByInstanceScript(info, inst))
             continue;
 
-        if (info.availableWhen && !info.availableWhen(bot))
-        {
-            auto const& progress = AI_VALUE(DungeonEventProgress&, DcKey::EventProgress);
-            // Keep the selected transfer through the leader's click so the
-            // step can confirm arrival before the roster moves on.
-            if (!info.eventId || progress.eventId != info.eventId ||
-                progress.instanceId != bot->GetInstanceId() || !progress.lastDriveMs)
-                continue;
-        }
+        if (!DungeonEventExecutor::CanSelectObjective(bot, context, info))
+            continue;
 
         BossLiveState const state = LookupLive(liveness, info.entry);
         if (state.present && !state.alive)
