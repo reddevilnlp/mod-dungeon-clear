@@ -212,6 +212,7 @@ enum class EventStepKind : uint8
                              // (a bear tank or resto healer cannot do its job in it)
                              // and buffed like everyone else. Humans are never buffed
                              // or shapeshifted; pets do not drown. See DcBreathSource.
+    UseGameObjectForGroup,   // each member uses an active GO and reaches a recorded landing
 };
 
 // Pure classification of a step kind, shared by the chain driver, the follower
@@ -926,6 +927,11 @@ public:
     // the start hook from inside the hold closes that: it is a no-op while the
     // encounter is live and re-fires the real trigger once it isn't.
     EventBuilder& WhileHolding(uint32 hookId);
+    // Anchored persistent transfer. Walk controlled bots to the authored
+    // interaction point as needed, accept an active GOOBER, and wait for each
+    // original member to reach the three-dimensional landing after using it.
+    EventBuilder& UseGOForGroup(uint32 entry, float x, float y, float z,
+                                float landX, float landY, float landZ, float radius);
     EventBuilder& UseGO(uint32 goEntry, float searchRadius = 0.0f,
                         float x = 0.0f, float y = 0.0f, float z = 0.0f);
     // Skip the LAST-added UseGO's click when the map's InstanceScript already

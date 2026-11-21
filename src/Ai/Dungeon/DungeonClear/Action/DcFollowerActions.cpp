@@ -71,6 +71,7 @@
 #include "Ai/Dungeon/DungeonClear/Util/StridedPathfinder.h"
 #include "Ai/Dungeon/DungeonClear/Util/SwimPathfinder.h"
 #include "Ai/Dungeon/DungeonClear/Util/DcPartyWideChain.h"
+#include "Ai/Dungeon/DungeonClear/Util/DungeonEventExecutor.h"
 #include "Ai/Dungeon/DungeonClear/Value/DungeonClearStateValues.h"
 #include "Playerbots.h"
 #include "DcActionShared.h"
@@ -268,6 +269,13 @@ bool DungeonClearFollowTankAction::Execute(Event /*event*/)
     {
         followedTank = tank->GetGUID();
         DcFollowerLifecycle::MarkFollowing(bot->GetGUID());
+        return true;
+    }
+
+    if (DungeonEventExecutor::OwnsGameObjectTransfer(tank))
+    {
+        if (bot->GetMotionMaster()->GetCurrentMovementGeneratorType() == FOLLOW_MOTION_TYPE)
+            DcMovement::StopBot(bot, DcMovement::Stop::Hold);
         return true;
     }
 

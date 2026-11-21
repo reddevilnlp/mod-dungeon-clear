@@ -354,6 +354,21 @@ EventBuilder& EventBuilder::WhileHolding(uint32 hookId)
     return *this;
 }
 
+EventBuilder& EventBuilder::UseGOForGroup(uint32 entry, float x, float y, float z,
+                                           float landX, float landY, float landZ, float radius)
+{
+    EventStep& step = Add(EventStepKind::UseGameObjectForGroup);
+    step.goEntry = entry;
+    step.x = x;
+    step.y = y;
+    step.z = z;
+    step.landX = landX;
+    step.landY = landY;
+    step.landZ = landZ;
+    step.radius = radius;
+    return *this;
+}
+
 EventBuilder& EventBuilder::UseGO(uint32 goEntry, float searchRadius,
                                   float x, float y, float z)
 {
@@ -585,6 +600,7 @@ namespace
             RegisterBlackrockDepthsEvents(t);
             RegisterBlackrockSpireEvents(t);
             RegisterDeadminesEvents(t);
+            RegisterNaxx40QuarterPortalEvents(t);
             RegisterWailingCavernsEvents(t);
             RegisterBlackfathomDeepsEvents(t);
             RegisterStratholmeEvents(t);

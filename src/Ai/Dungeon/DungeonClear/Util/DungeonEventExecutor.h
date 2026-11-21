@@ -7,6 +7,7 @@
 #define _PLAYERBOT_DUNGEONEVENTEXECUTOR_H
 
 #include "Common.h"
+#include "ObjectGuid.h"
 #include "Ai/Dungeon/DungeonClear/Data/DungeonEventRegistry.h"
 
 class Player;
@@ -88,6 +89,12 @@ struct DungeonEventProgress
     // checkpoint. 0 => not waiting.
     uint32 relocationCombatHoldMs{0};
 
+    // Original roster for a multi-member GameObject transfer. The landing
+    // is checked live so a click or pending teleport never counts as arrival.
+    ObjectGuid transferGroup;
+    std::vector<ObjectGuid> transferMembers;
+    uint32 transferAttemptMs{0};
+
     // Drive-log throttle: the per-tick step line is logged only on a transition
     // (step or result change) or every kLogHeartbeatMs while Running, so a long
     // WaitForSpawn doesn't spam one line per tick.
@@ -118,6 +125,9 @@ struct DungeonEventProgress
         progressMs = now;
         escortProgressMs = 0;
         escortCombatWedgeMs = 0;
+        transferGroup.Clear();
+        transferMembers.clear();
+        transferAttemptMs = 0;
     }
 
     void Reset()
@@ -133,6 +143,9 @@ struct DungeonEventProgress
         escortProgressMs = 0;
         escortCombatWedgeMs = 0;
         relocationCombatHoldMs = 0;
+        transferGroup.Clear();
+        transferMembers.clear();
+        transferAttemptMs = 0;
         lastLoggedStep = -1;
         lastLoggedResult = -1;
         lastLogMs = 0;
@@ -142,6 +155,9 @@ struct DungeonEventProgress
 class DungeonEventExecutor
 {
 public:
+    // The current anchored transfer owns participant movement while on this
+    // step. Followers and recovery must leave its source and landing alone.
+    static bool OwnsGameObjectTransfer(Player* owner);
     // PURE state transition: fold a step's `result` into `prog` and report what
     // the driver should do. Handles step advancement, the per-step timeout
     // (escalates a too-long Running to Failed using `nowMs - stepStartMs`), and
