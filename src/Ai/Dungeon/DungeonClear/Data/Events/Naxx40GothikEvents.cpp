@@ -150,6 +150,7 @@ void RegisterNaxx40GothikEvents(std::vector<DungeonEvent>& out)
         .StepsOwnMovement()
         .MoveTo(PullX, PullY, PullZ, ArrivalRadius)
         .Custom(DC_HOOK_RAID_MUSTER)
+            .Timeout(240000)
         .Custom(HookId).Timeout(300000)
         .Build());
 }
