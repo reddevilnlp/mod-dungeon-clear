@@ -846,6 +846,7 @@ namespace
             RegisterHallsOfReflectionHooks(t);
             RegisterCullingOfStratholmeHooks(t);
             RegisterTrialOfTheChampionHooks(t);
+            RegisterNaxx40GothikHooks(t);
             RegisterOculusHooks(t);
             RegisterKarazhanChessHooks(t);
             RegisterKarazhanHooks(t);

@@ -481,6 +481,8 @@ Unit* DcTargeting::FindBlockingTrash(Player* bot,
     if (!bot || possibleTargets.empty())
         return nullptr;
 
+    uint32 const mapId = bot->GetMapId();
+    bool const excluded = DcTargetExclusionRegistry::HasRowsFor(mapId);
     float const bossDx = boss.x - bot->GetPositionX();
     float const bossDy = boss.y - bot->GetPositionY();
     float const bossAngle = std::atan2(bossDy, bossDx);
@@ -491,7 +493,8 @@ Unit* DcTargeting::FindBlockingTrash(Player* bot,
     for (ObjectGuid guid : possibleTargets)
     {
         Unit* u = ObjectAccessor::GetUnit(*bot, guid);
-        if (!u || !u->IsAlive())
+        if (!u || !u->IsAlive() ||
+            (excluded && DcTargetExclusionRegistry::IsExcluded(bot, mapId, u->GetEntry(), /*forTank*/ true)))
             continue;
         if (!bot->IsHostileTo(u))
             continue;
@@ -938,6 +941,9 @@ Unit* DcTargeting::FindNearestReachableHostile(Player* bot)
     if (!map)
         return nullptr;
 
+    uint32 const mapId = bot->GetMapId();
+    bool const excluded = DcTargetExclusionRegistry::HasRowsFor(mapId);
+
     // Match the cap PullRequestAction enforces — anything past this gets
     // silently rejected by the pull pipeline, so don't even consider it.
     float const maxPullDistance = DC_PB_CONFIG(ReactDistance, reactDistance) * 3.0f;
@@ -954,7 +960,8 @@ Unit* DcTargeting::FindNearestReachableHostile(Player* bot)
             continue;
         if (!bot->IsHostileTo(c))
             continue;
-        if (c->IsInCombat())
+        if (c->IsInCombat() ||
+            (excluded && DcTargetExclusionRegistry::IsExcluded(bot, mapId, c->GetEntry(), /*forTank*/ true)))
             continue;
         float const dist = bot->GetDistance(c);
         if (dist > maxPullDistance)

@@ -120,6 +120,8 @@ enum class DcThrottle : uint8
     UbrsStadiumFire,     // floor between two forged AT 2026 fires (Rend's script
                          // takes ~1s to read IN_PROGRESS)
 
+    StationaryBossOpener, // retry floor for an encounter opener fired from a fixed point
+
     Count
 };
 

@@ -137,6 +137,9 @@ struct DungeonBossInfo
     // stands at another. DungeonBossesValue resolves the live one per instance
     // (ResolveLiveSpawn). Empty for the ordinary single-spawn boss.
     std::vector<DcSpawnPoint> spawns;
+
+    // A Go command for this boss first visits this objective while it is pending.
+    uint32 preparesBossEntry{0};
 };
 
 // Pick, among a boss's spawn points, the one the LIVE creature stands at —

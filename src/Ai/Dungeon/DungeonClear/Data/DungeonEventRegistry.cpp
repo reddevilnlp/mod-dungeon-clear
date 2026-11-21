@@ -636,6 +636,7 @@ namespace
             RegisterHallsOfReflectionEvents(t);
             RegisterCullingOfStratholmeEvents(t);
             RegisterTrialOfTheChampionEvents(t);
+            RegisterNaxx40GothikEvents(t);
             RegisterOculusEvents(t);
             RegisterKarazhanEvents(t);
             RegisterNaxx40HorsemenEvents(t);
