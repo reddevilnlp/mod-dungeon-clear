@@ -57,6 +57,7 @@ struct BossRosterPatch
     // for the same map with gate HeroicOnly — Apply applies every patch whose
     // gate matches the run's difficulty key, in registration order.
     DcDifficultyGate gate{DcDifficultyGate::Any};
+    std::optional<DcDiffKey> exactDifficulty;
 };
 
 class BossRosterRegistry

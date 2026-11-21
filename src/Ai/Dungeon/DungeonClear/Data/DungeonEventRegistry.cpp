@@ -33,6 +33,12 @@ EventBuilder& EventBuilder::Anchored(uint32 orderIndex)
     return *this;
 }
 
+EventBuilder& EventBuilder::ForDifficulty(DcDiffKey key)
+{
+    _ev.exactDifficulty = key;
+    return *this;
+}
+
 EventBuilder& EventBuilder::Conditional(EventCondition condition)
 {
     _ev.activation = EventActivation::Conditional;
@@ -637,6 +643,12 @@ DungeonEvent const* DungeonEventRegistry::Find(uint32 mapId, uint32 id)
     return nullptr;
 }
 
+DungeonEvent const* DungeonEventRegistry::Find(uint32 mapId, uint32 id, DcDiffKey key)
+{
+    DungeonEvent const* event = Find(mapId, id);
+    return event && DcGateMatches(event->gate, key, event->exactDifficulty) ? event : nullptr;
+}
+
 bool DungeonEventRegistry::HasEvents(uint32 mapId)
 {
     for (DungeonEvent const& e : EventTable())
@@ -659,7 +671,7 @@ std::vector<DungeonEvent const*> DungeonEventRegistry::Conditional(uint32 mapId,
     std::vector<DungeonEvent const*> out;
     for (DungeonEvent const& e : EventTable())
         if (e.mapId == mapId && e.activation == EventActivation::Conditional &&
-            DcGateMatches(e.gate, key))
+            DcGateMatches(e.gate, key, e.exactDifficulty))
             out.push_back(&e);
     return out;
 }

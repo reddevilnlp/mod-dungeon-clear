@@ -1051,3 +1051,5 @@ AC_ADD_CONFIG_FILE("${CMAKE_CURRENT_LIST_DIR}/conf/mod_dungeon_clear.conf.dist")
 #    dropped them: Zul'Gurub's High Priestess Arlokk, summoned by the Gong of
 #    Bethekk, and Temple of Ahn'Qiraj's Ouro, summoned when a player reaches his
 #    mound. Each gets a boss anchor on its trigger plus a repeatable event.)
+
+# Naxx40 roster ordering (Data/Events/Naxx40RosterOrder.cpp).

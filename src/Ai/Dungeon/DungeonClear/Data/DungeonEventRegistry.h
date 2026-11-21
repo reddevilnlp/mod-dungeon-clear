@@ -551,6 +551,7 @@ struct DungeonEvent
     // this field additionally hard-stops Drive as a belt-and-suspenders, and is
     // what the conditional-event paths filter on directly.
     DcDifficultyGate gate{DcDifficultyGate::Any};
+    std::optional<DcDiffKey> exactDifficulty;
 
     std::vector<EventStep> steps;
 
@@ -786,6 +787,7 @@ public:
     EventBuilder(uint32 mapId, uint32 id, std::string name);
 
     EventBuilder& Anchored(uint32 orderIndex);
+    EventBuilder& ForDifficulty(DcDiffKey key);
     EventBuilder& Conditional(EventCondition condition);
     EventBuilder& Optional();
     EventBuilder& Repeatable();
@@ -1078,6 +1080,7 @@ public:
 
     // The event with `id` on `mapId`, or nullptr if none is registered.
     static DungeonEvent const* Find(uint32 mapId, uint32 id);
+    static DungeonEvent const* Find(uint32 mapId, uint32 id, DcDiffKey key);
 
     // True if the map has any registered event (cheap gate for callers).
     static bool HasEvents(uint32 mapId);

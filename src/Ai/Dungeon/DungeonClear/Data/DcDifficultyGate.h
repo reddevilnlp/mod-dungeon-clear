@@ -6,6 +6,8 @@
 #ifndef _PLAYERBOT_DCDIFFICULTYGATE_H
 #define _PLAYERBOT_DCDIFFICULTYGATE_H
 
+#include <optional>
+
 #include "Define.h"
 
 #include "Ai/Dungeon/DungeonClear/Util/DcDifficulty.h"
@@ -38,6 +40,12 @@ inline bool DcGateMatches(DcDifficultyGate gate, DcDiffKey key)
         default:
             return true;
     }
+}
+
+inline bool DcGateMatches(DcDifficultyGate gate, DcDiffKey key,
+                          std::optional<DcDiffKey> const& exact)
+{
+    return DcGateMatches(gate, key) && (!exact || key == *exact);
 }
 
 #endif

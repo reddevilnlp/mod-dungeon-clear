@@ -1532,7 +1532,7 @@ EventDriveOutcome DungeonEventExecutor::Drive(Player* bot, AiObjectContext* cont
     // primary gate is upstream (a gated roster anchor / the Conditional
     // difficulty overload), so reaching here means an authoring slip — skip the
     // event so the clear advances rather than stalling on inert content.
-    if (bot && bot->GetMap() && !DcGateMatches(ev.gate, DcDifficulty::Of(bot->GetMap())))
+    if (bot && bot->GetMap() && !DcGateMatches(ev.gate, DcDifficulty::Of(bot->GetMap()), ev.exactDifficulty))
         return EventDriveOutcome::Skipped;
 
     uint32 const now = getMSTime();

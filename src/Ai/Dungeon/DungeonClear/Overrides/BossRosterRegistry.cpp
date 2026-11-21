@@ -69,6 +69,7 @@ namespace
             RegisterMoltenCoreRoster(t);
             RegisterZulGurubRoster(t);
             RegisterTempleOfAhnQirajRoster(t);
+            RegisterNaxx40RosterOrder(t);
             RegisterHallsOfStoneRoster(t);
             RegisterUtgardePinnacleRoster(t);
             RegisterPitOfSaronRoster(t);
@@ -197,7 +198,7 @@ std::vector<DungeonBossInfo> BossRosterRegistry::Apply(uint32 mapId, DcDiffKey k
 {
     for (BossRosterPatch const& patch : PatchTable())
     {
-        if (patch.mapId != mapId || !DcGateMatches(patch.gate, key))
+        if (patch.mapId != mapId || !DcGateMatches(patch.gate, key, patch.exactDifficulty))
             continue;
         base = ApplyOne(patch, std::move(base));
     }
