@@ -35,7 +35,6 @@
 #include "Playerbots.h"
 #include "Spell.h"
 #include "Timer.h"
-#include "Util/DcPlayerbotCompat.h"
 #include "Util/DcPlayerbotsConfig.h"
 #include "WorldPacket.h"
 #include "WorldSession.h"
@@ -240,27 +239,37 @@ namespace
             prog.transferMembers.clear();
             prog.transferAttemptMs = 0;
             for (Group::MemberSlot const& slot : group->GetMemberSlots())
-                prog.transferMembers.push_back(slot.guid);
+                prog.transferMembers.push_back({slot.guid});
+            LOG_INFO("playerbots.dungeonclear", "[DC:{}] GameObject {} transfer started for {} members",
+                     owner->GetName(), step.goEntry, prog.transferMembers.size());
         }
 
+        if (prog.transferMembers.empty())
+            return StepResult::Blocked;
         if (DcCombatFlag::AnyPartyEngagement(owner))
             return StepResult::Running;
 
-        std::vector<Player*> waiting;
+        std::vector<std::pair<GameObjectTransferMember*, Player*>> waiting;
         waiting.reserve(prog.transferMembers.size());
         GameObject* go = nullptr;
-        for (ObjectGuid guid : prog.transferMembers)
+        for (GameObjectTransferMember& slot : prog.transferMembers)
         {
-            Player* member = ObjectAccessor::GetPlayer(*owner, guid);
+            Player* member = ObjectAccessor::GetPlayer(*owner, slot.guid);
             if (!member || !member->IsInWorld() || member->GetGroup() != group ||
                 !member->IsInMap(owner) || !member->InSamePhase(owner))
             {
-                waiting.push_back(nullptr);
+                waiting.emplace_back(&slot, nullptr);
                 continue;
             }
             if (IsTransferArrival(member, step))
+            {
+                // Every transfer can share a destination. A member already
+                // standing there needs proof from this source to count.
+                if (!slot.observedUseFromSource)
+                    waiting.emplace_back(&slot, nullptr);
                 continue;
-            waiting.push_back(member);
+            }
+            waiting.emplace_back(&slot, member);
             if (!go && !member->IsBeingTeleported() &&
                 member->GetExactDist(step.x, step.y, step.z) < DC_EVENT_GO_SEARCH)
                 go = member->FindNearestGameObject(step.goEntry, DC_EVENT_GO_SEARCH);
@@ -282,15 +291,25 @@ namespace
         if (canClick)
             prog.transferAttemptMs = now;
 
-        for (Player* member : waiting)
+        for (auto const& [slot, member] : waiting)
         {
-            PlayerbotAI* ai = member ? GET_PLAYERBOT_AI(member) : nullptr;
-            if (!ai || (member != owner && DcPlayerbotCompat::IsSelfBot(member)) ||
-                !member->IsAlive() || member->IsInCombat() || member->IsBeingTeleported() ||
-                member->IsFalling() || !ai->CanMove())
+            if (!member || !member->IsAlive() || member->IsInCombat() ||
+                member->IsBeingTeleported() || member->IsFalling())
                 continue;
 
-            if (!go->IsWithinDistInMap(member, go->GetInteractionDistance()))
+            bool const inRange = go->IsWithinDistInMap(member, go->GetInteractionDistance());
+            PlayerbotAI* ai = GET_PLAYERBOT_AI(member);
+            if (!ai)
+            {
+                // A human clicks in their client. Observe them at this source
+                // before treating the same player's landing as a receipt.
+                slot->observedUseFromSource |= inRange;
+                continue;
+            }
+            if (!ai->CanMove())
+                continue;
+
+            if (!inRange)
             {
                 if (canClick)
                     ApproachTransfer(member, ai, step);
@@ -307,6 +326,7 @@ namespace
             WorldPacket click(CMSG_GAMEOBJ_USE);
             click << go->GetGUID();
             click.rpos(0);
+            slot->observedUseFromSource = true;
             member->GetSession()->HandleGameObjectUseOpcode(click);
         }
         return StepResult::Running;
@@ -1945,6 +1965,23 @@ bool DungeonEventExecutor::ObjectiveArrived(Player* bot, AiObjectContext* contex
         }
     }
     return false;
+}
+
+bool DungeonEventExecutor::CanSelectObjective(Player* bot, AiObjectContext* context,
+                                               DungeonBossInfo const& anchor)
+{
+    if (!anchor.availableWhen || anchor.availableWhen(bot))
+        return true;
+
+    DungeonEventProgress const& progress =
+        context->GetValue<DungeonEventProgress&>(DcKey::EventProgress)->Get();
+    if (!anchor.eventId || progress.eventId != anchor.eventId ||
+        progress.instanceId != bot->GetInstanceId() || !progress.lastDriveMs)
+        return false;
+
+    DungeonEvent const* event = DungeonEventRegistry::Find(
+        anchor.mapId, anchor.eventId, DcDifficulty::Of(bot->GetMap()));
+    return event && event->persistent && progress.stepIndex < event->steps.size();
 }
 
 bool DungeonEventExecutor::OwnsGameObjectTransfer(Player* owner)

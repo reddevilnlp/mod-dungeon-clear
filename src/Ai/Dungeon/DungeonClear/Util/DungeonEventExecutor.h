@@ -38,6 +38,12 @@ enum class EventDriveOutcome : uint8
 // Per-run progress through one event, owned by a DungeonClear value (leader-
 // keyed). Self-healing: when a different event starts (eventId mismatch) Drive
 // resets it, so a stale value from a prior run is harmless.
+struct GameObjectTransferMember
+{
+    ObjectGuid guid;
+    bool observedUseFromSource{false};
+};
+
 struct DungeonEventProgress
 {
     uint32 eventId{0};      // event currently being driven (0 = none)
@@ -92,7 +98,7 @@ struct DungeonEventProgress
     // Original roster for a multi-member GameObject transfer. The landing
     // is checked live so a click or pending teleport never counts as arrival.
     ObjectGuid transferGroup;
-    std::vector<ObjectGuid> transferMembers;
+    std::vector<GameObjectTransferMember> transferMembers;
     uint32 transferAttemptMs{0};
 
     // Drive-log throttle: the per-tick step line is logged only on a transition
@@ -158,6 +164,9 @@ public:
     // The current anchored transfer owns participant movement while on this
     // step. Followers and recovery must leave its source and landing alone.
     static bool OwnsGameObjectTransfer(Player* owner);
+
+    // A live roster prerequisite applies to both automatic and manual selection.
+    static bool CanSelectObjective(Player* bot, AiObjectContext* context, DungeonBossInfo const& anchor);
     // PURE state transition: fold a step's `result` into `prog` and report what
     // the driver should do. Handles step advancement, the per-step timeout
     // (escalates a too-long Running to Failed using `nowMs - stepStartMs`), and

@@ -5,6 +5,7 @@
 
 #include "Ai/Dungeon/DungeonClear/Data/Events/DungeonEventTables.h"
 #include "Ai/Dungeon/DungeonClear/Data/Events/DungeonRosterBuilders.h"
+#include "CreatureAI.h"
 #include "InstanceScript.h"
 #include "Player.h"
 
@@ -51,43 +52,40 @@ namespace
     constexpr float THADDIUS_CLICK_Y = -2936.820f;
     constexpr float THADDIUS_CLICK_Z = 302.571f;
 
-    bool QuarterBossDone(Player* tank, uint32 slot)
+    bool CanLeaveWing(Player* tank, uint32 slot, float x, float y, float z)
     {
-        if (!tank || !tank->IsAlive())
+        if (!tank || !tank->IsAlive() || tank->GetExactDist(HUB_X, HUB_Y, HUB_Z) <= HUB_RADIUS)
             return false;
+
         InstanceScript* instance = tank->GetInstanceScript();
-        return instance && instance->IsBossDone(slot);
+        if (!instance || !instance->IsBossDone(slot))
+            return false;
+
+        // Use the encounter footprint for a kill anywhere in its room. The
+        // approach radius also covers the exit alcove beyond the boss boundary.
+        auto const* boundary = instance->GetBossBoundary(slot);
+        return (boundary && !boundary->empty() && CreatureAI::IsInBounds(*boundary, tank)) ||
+               tank->GetExactDist(x, y, z) <= WING_RADIUS;
     }
 
     bool CanLeaveArachnidQuarter(Player* tank)
     {
-        return QuarterBossDone(tank, MAEXXNA_BOSS_STATE) &&
-               tank->GetExactDist(MAEXXNA_CLICK_X, MAEXXNA_CLICK_Y, MAEXXNA_CLICK_Z) <= WING_RADIUS;
+        return CanLeaveWing(tank, MAEXXNA_BOSS_STATE, MAEXXNA_CLICK_X, MAEXXNA_CLICK_Y, MAEXXNA_CLICK_Z);
     }
 
     bool CanLeavePlagueQuarter(Player* tank)
     {
-        return QuarterBossDone(tank, LOATHEB_BOSS_STATE) &&
-               tank->GetExactDist(LOATHEB_CLICK_X, LOATHEB_CLICK_Y, LOATHEB_CLICK_Z) <= WING_RADIUS;
+        return CanLeaveWing(tank, LOATHEB_BOSS_STATE, LOATHEB_CLICK_X, LOATHEB_CLICK_Y, LOATHEB_CLICK_Z);
     }
 
     bool CanLeaveMilitaryQuarter(Player* tank)
     {
-        if (!QuarterBossDone(tank, HORSEMEN_BOSS_STATE))
-            return false;
-
-        // Include the dais and both sides of the room.
-        float const x = tank->GetPositionX();
-        float const y = tank->GetPositionY();
-        float const z = tank->GetPositionZ();
-        return x >= 2450.0f && x <= 2630.0f && y >= -3016.0f && y <= -2880.0f &&
-               z >= 239.0f && z <= 248.0f;
+        return CanLeaveWing(tank, HORSEMEN_BOSS_STATE, HORSEMEN_CLICK_X, HORSEMEN_CLICK_Y, HORSEMEN_CLICK_Z);
     }
 
     bool CanLeaveConstructQuarter(Player* tank)
     {
-        return QuarterBossDone(tank, THADDIUS_BOSS_STATE) &&
-               tank->GetExactDist(THADDIUS_CLICK_X, THADDIUS_CLICK_Y, THADDIUS_CLICK_Z) <= WING_RADIUS;
+        return CanLeaveWing(tank, THADDIUS_BOSS_STATE, THADDIUS_CLICK_X, THADDIUS_CLICK_Y, THADDIUS_CLICK_Z);
     }
 }
 

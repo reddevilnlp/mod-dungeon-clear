@@ -1219,6 +1219,12 @@ bool DcGoAction::Execute(Event event)
         return false;
     }
 
+    if (!DungeonEventExecutor::CanSelectObjective(bot, context, *matched))
+    {
+        DcRefuse(botAI, bot, matched->name + " is available after the encounter and while the raid is in its wing.");
+        return false;
+    }
+
     std::unordered_set<uint32>& skipped =
         context->GetValue<std::unordered_set<uint32>&>(DcKey::Skipped)->Get();
     skipped.erase(matched->entry);
