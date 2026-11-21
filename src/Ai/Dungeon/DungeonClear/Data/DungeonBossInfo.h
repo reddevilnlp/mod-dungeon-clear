@@ -11,6 +11,8 @@
 
 #include "Common.h"
 
+class Player;
+
 // A boss list entry is either a real combat boss (the default — killed for
 // encounter credit) or a non-combat "objective": a navmesh anchor the tank
 // travels to in order to progress an event (trigger a spawn, traverse a gate),
@@ -65,6 +67,10 @@ struct DungeonBossInfo
     // objective falls back to onArriveHook (or arrive-then-continue). When set it
     // takes precedence over onArriveHook. See DungeonEventExecutor.
     uint32 eventId{0};
+
+    // An anchored event may have a live prerequisite for selection. Once the
+    // event starts it retains the objective until its own steps finish.
+    bool (*availableWhen)(Player*){nullptr};
 
     // Boss only (roster patch authoring aid): copy this base entry's
     // encounterIndex onto this added boss so it borrows that boss's kill-bit

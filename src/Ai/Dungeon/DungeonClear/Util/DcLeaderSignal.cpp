@@ -755,8 +755,8 @@ bool DcLeaderSignal::GetLeaderCampHold(Player* bot, Position& campOut, bool& pas
         return false;
 
     Player* leader = FindLeaderTank(bot);
-    if (!leader || leader == bot)
-        return false;  // the leader drives; it never holds at its own camp
+    if (!leader || leader == bot || DungeonEventExecutor::OwnsGameObjectTransfer(leader))
+        return false;
 
     PlayerbotAI* leaderAI = GET_PLAYERBOT_AI(leader);
     if (!leaderAI)

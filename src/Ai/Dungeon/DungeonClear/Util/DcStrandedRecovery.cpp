@@ -20,6 +20,7 @@
 #include "Ai/Dungeon/DungeonClear/Util/DcStatusPublisher.h"
 #include "Ai/Dungeon/DungeonClear/Util/DcStrandedDecision.h"
 #include "Ai/Dungeon/DungeonClear/Util/DcTargeting.h"
+#include "Ai/Dungeon/DungeonClear/Util/DungeonEventExecutor.h"
 
 #include <cmath>
 #include <optional>
@@ -197,7 +198,7 @@ namespace DcStrandedRecovery
 
         // A pause is an intentional hold, not a stall: keep the clock fresh so a
         // long Wait-at-Boss / door pause never makes the run look frozen on resume.
-        if (run.paused)
+        if (run.paused || DungeonEventExecutor::OwnsGameObjectTransfer(driver.runOwner))
         {
             DcRunProgress::Stamp(run.progress, now);
             return false;
@@ -258,6 +259,9 @@ namespace DcStrandedRecovery
 
         Driver const driver = ResolveDriver(bot);
         if (!driver.runOwner || !driver.anchor || driver.clockOwner != bot)
+            return;
+
+        if (DungeonEventExecutor::OwnsGameObjectTransfer(driver.runOwner))
             return;
 
         Player* const leader = driver.anchor;

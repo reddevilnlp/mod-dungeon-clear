@@ -28,11 +28,14 @@
 #include "Ai/Dungeon/DungeonClear/Util/DcTargeting.h"
 #include "Log.h"
 #include "MotionMaster.h"
+#include "ObjectAccessor.h"
+#include "PathGenerator.h"
 #include "MoveSplineInitArgs.h"
 #include "Player.h"
 #include "Playerbots.h"
 #include "Spell.h"
 #include "Timer.h"
+#include "Util/DcPlayerbotCompat.h"
 #include "Util/DcPlayerbotsConfig.h"
 #include "WorldPacket.h"
 #include "WorldSession.h"
@@ -45,6 +48,7 @@
 #include "Ai/Dungeon/DungeonClear/Util/DcBreathProvision.h"
 #include "Ai/Dungeon/DungeonClear/Util/DcPartyWideChain.h"
 #include "Ai/Dungeon/DungeonClear/Util/DcCombatFlag.h"
+#include "Ai/Dungeon/DungeonClear/Util/DcMovement.h"
 #include "Ai/Dungeon/DungeonClear/Util/DcRun.h"
 #include "Ai/Dungeon/DungeonClear/Util/DungeonClearTuning.h"
 #include "Ai/Dungeon/DungeonClear/Util/DungeonPathFollower.h"
@@ -193,6 +197,119 @@ namespace
             return;
         bot->GetMotionMaster()->MovePoint(0, x, y, z, FORCED_MOVEMENT_NONE, 0.0f, 0.0f,
                                           /*generatePath*/ true, false);
+    }
+
+    void ApproachTransfer(Player* member, PlayerbotAI* ai, EventStep const& step)
+    {
+        if (member->GetMotionMaster()->GetCurrentMovementGeneratorType() == FOLLOW_MOTION_TYPE)
+            DcMovement::StopBot(member, DcMovement::Stop::Hold);
+        if (member->isMoving())
+            return;
+
+        PathGenerator path(member);
+        if (!path.CalculatePath(step.x, step.y, step.z, /*forceDest*/ false))
+            return;
+        PathType const type = path.GetPathType();
+        if (!(type & PATHFIND_NORMAL) ||
+            (type & (PATHFIND_SHORTCUT | PATHFIND_INCOMPLETE | PATHFIND_NOPATH | PATHFIND_NOT_USING_PATH)))
+            return;
+
+        Movement::PointsArray points = path.GetPath();
+        if (points.size() < 2)
+            return;
+        points.front() = {member->GetPositionX(), member->GetPositionY(), member->GetPositionZ()};
+        DcMovement::SplinePath(ai, points);
+    }
+
+    bool IsTransferArrival(Player const* member, EventStep const& step)
+    {
+        return member && member->IsAlive() && !member->IsBeingTeleported() &&
+            member->GetExactDist(step.landX, step.landY, step.landZ) <= step.radius;
+    }
+
+    StepResult DriveGameObjectTransfer(Player* owner, EventStep const& step,
+                                       DungeonEventProgress& prog, uint32 now)
+    {
+        Group const* group = owner->GetGroup();
+        if (!group || step.radius <= 0.0f)
+            return StepResult::Blocked;
+
+        if (prog.transferGroup != group->GetGUID() || prog.transferMembers.empty())
+        {
+            prog.transferGroup = group->GetGUID();
+            prog.transferMembers.clear();
+            prog.transferAttemptMs = 0;
+            for (Group::MemberSlot const& slot : group->GetMemberSlots())
+                prog.transferMembers.push_back(slot.guid);
+        }
+
+        if (DcCombatFlag::AnyPartyEngagement(owner))
+            return StepResult::Running;
+
+        std::vector<Player*> waiting;
+        waiting.reserve(prog.transferMembers.size());
+        GameObject* go = nullptr;
+        for (ObjectGuid guid : prog.transferMembers)
+        {
+            Player* member = ObjectAccessor::GetPlayer(*owner, guid);
+            if (!member || !member->IsInWorld() || member->GetGroup() != group ||
+                !member->IsInMap(owner) || !member->InSamePhase(owner))
+            {
+                waiting.push_back(nullptr);
+                continue;
+            }
+            if (IsTransferArrival(member, step))
+                continue;
+            waiting.push_back(member);
+            if (!go && !member->IsBeingTeleported() &&
+                member->GetExactDist(step.x, step.y, step.z) < DC_EVENT_GO_SEARCH)
+                go = member->FindNearestGameObject(step.goEntry, DC_EVENT_GO_SEARCH);
+        }
+
+        if (waiting.empty())
+        {
+            LOG_INFO("playerbots.dungeonclear", "[DC:{}] GameObject {} transfer complete: {}/{} arrived",
+                     owner->GetName(), step.goEntry, prog.transferMembers.size(), prog.transferMembers.size());
+            return StepResult::Done;
+        }
+
+        if (!go || go->GetGoType() != GAMEOBJECT_TYPE_GOOBER || !go->isSpawned() ||
+            go->GetGoState() != GO_STATE_ACTIVE || go->HasGameObjectFlag(GO_FLAG_NOT_SELECTABLE))
+            return StepResult::Running;
+
+        constexpr uint32 retryMs = 1500;
+        bool const canClick = !prog.transferAttemptMs || getMSTimeDiff(prog.transferAttemptMs, now) >= retryMs;
+        if (canClick)
+            prog.transferAttemptMs = now;
+
+        for (Player* member : waiting)
+        {
+            PlayerbotAI* ai = member ? GET_PLAYERBOT_AI(member) : nullptr;
+            if (!ai || (member != owner && DcPlayerbotCompat::IsSelfBot(member)) ||
+                !member->IsAlive() || member->IsInCombat() || member->IsBeingTeleported() ||
+                member->IsFalling() || !ai->CanMove())
+                continue;
+
+            if (!go->IsWithinDistInMap(member, go->GetInteractionDistance()))
+            {
+                if (canClick)
+                    ApproachTransfer(member, ai, step);
+                continue;
+            }
+
+            DcMovement::StopBot(member, DcMovement::Stop::Hold);
+            if (!canClick || (member == owner && waiting.size() != 1) || !member->GetSession())
+                continue;
+
+            // The server's ordinary click applies its range and mover checks
+            // before calling Use(member). The object's own spell moves the
+            // member. A local VMap ray would reject otherwise valid clicks.
+            WorldPacket click(CMSG_GAMEOBJ_USE);
+            click << go->GetGUID();
+            click.rpos(0);
+            member->GetSession()->HandleGameObjectUseOpcode(click);
+        }
+        return StepResult::Running;
     }
 
     // A Jump step bridges an OFF-MESH gap (a drop-down ledge): the leader leaps
@@ -751,6 +868,9 @@ StepResult DungeonEventExecutor::RunStep(Player* bot, AiObjectContext* context,
 
         case EventStepKind::EnsureWaterBreathing:
             return DcBreathProvision::Tick(bot, prog, nowMs);
+
+        case EventStepKind::UseGameObjectForGroup:
+            return DriveGameObjectTransfer(bot, step, prog, nowMs);
 
         case EventStepKind::UseGameObject:
         {
@@ -1827,6 +1947,31 @@ bool DungeonEventExecutor::ObjectiveArrived(Player* bot, AiObjectContext* contex
     return false;
 }
 
+bool DungeonEventExecutor::OwnsGameObjectTransfer(Player* owner)
+{
+    PlayerbotAI* ai = owner ? GET_PLAYERBOT_AI(owner) : nullptr;
+    if (!ai)
+        return false;
+    AiObjectContext* context = ai->GetAiObjectContext();
+    auto const& run = DcRun::Of(context);
+    if (!run.enabled || run.paused)
+        return false;
+
+    DungeonEventProgress const& prog =
+        context->GetValue<DungeonEventProgress&>(DcKey::EventProgress)->Get();
+    if (prog.transferMembers.empty() || !prog.eventId || prog.instanceId != owner->GetInstanceId())
+        return false;
+
+    auto const next = context->GetValue<std::optional<DungeonBossInfo>>(DcKey::NextDungeonBoss)->Get();
+    if (!next || next->eventId != prog.eventId)
+        return false;
+
+    DungeonEvent const* event =
+        DungeonEventRegistry::Find(owner->GetMapId(), prog.eventId, DcDifficulty::Of(owner->GetMap()));
+    return event && prog.stepIndex < event->steps.size() &&
+        event->steps[prog.stepIndex].kind == EventStepKind::UseGameObjectForGroup;
+}
+
 bool DungeonEventExecutor::IsProgressFresh(DungeonEventProgress const& prog, uint32 mapId)
 {
     if (!prog.eventId || getMSTimeDiff(prog.lastDriveMs, getMSTime()) > EventStaleGapMs())
@@ -1937,7 +2082,8 @@ bool DungeonEventExecutor::IsPersistentAnchoredEventActive(AiObjectContext* cont
     bool const startedFront =
         !ev->steps.empty() &&
         (ev->steps.front().kind == EventStepKind::MoveTo ||
-         (ev->steps.front().kind == EventStepKind::Custom && ev->stepsOwnMovement));
+         (ev->stepsOwnMovement && (ev->steps.front().kind == EventStepKind::Custom ||
+                                   ev->steps.front().kind == EventStepKind::UseGameObjectForGroup)));
     bool const started = prog.stepIndex >= 1 || startedFront;
     return prog.eventId == ev->id && started && prog.stepIndex < ev->steps.size();
 }

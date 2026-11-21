@@ -18,6 +18,7 @@
 #include "Map.h"
 #include "Ai/Dungeon/DungeonClear/Data/DungeonWingRegistry.h"
 #include "Ai/Dungeon/DungeonClear/Util/DcAnchorDone.h"
+#include "Ai/Dungeon/DungeonClear/Util/DungeonEventExecutor.h"
 #include "Ai/Dungeon/DungeonClear/Util/DcBossOrdering.h"
 #include "Ai/Dungeon/DungeonClear/Util/DcRunWing.h"
 #include "Ai/Dungeon/DungeonClear/Util/DungeonClearUtil.h"
@@ -243,6 +244,16 @@ std::optional<DungeonBossInfo> NextDungeonBossValue::Calculate()
         // NOT_STARTED again after a reload is a candidate again.
         if (DcAnchorDoneByInstanceScript(info, inst))
             continue;
+
+        if (info.availableWhen && !info.availableWhen(bot))
+        {
+            auto const& progress = AI_VALUE(DungeonEventProgress&, DcKey::EventProgress);
+            // Keep the selected transfer through the leader's click so the
+            // step can confirm arrival before the roster moves on.
+            if (!info.eventId || progress.eventId != info.eventId ||
+                progress.instanceId != bot->GetInstanceId() || !progress.lastDriveMs)
+                continue;
+        }
 
         BossLiveState const state = LookupLive(liveness, info.entry);
         if (state.present && !state.alive)

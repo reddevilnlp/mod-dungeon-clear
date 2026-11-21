@@ -70,6 +70,7 @@ namespace
             RegisterZulGurubRoster(t);
             RegisterTempleOfAhnQirajRoster(t);
             RegisterNaxx40RosterOrder(t);
+            RegisterNaxx40QuarterPortalRoster(t);
             RegisterHallsOfStoneRoster(t);
             RegisterUtgardePinnacleRoster(t);
             RegisterPitOfSaronRoster(t);

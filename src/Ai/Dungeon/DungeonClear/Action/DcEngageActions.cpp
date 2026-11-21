@@ -2302,6 +2302,13 @@ bool DcObjectiveArriveAction::Execute(Event /*event*/)
                         break;
                 }
             }
+            if (step.kind == EventStepKind::UseGameObjectForGroup &&
+                prog.transferMembers.empty() &&
+                (AI_VALUE(bool, DcKey::Stock::HasAvailableLoot) ||
+                 AI_VALUE(bool, DcKey::Stock::CanLoot) || DcPartyState::IsAnyPartyMemberLooting(bot) ||
+                 DcRezRecovery::IsPending(bot)))
+                return false;
+
             // THE PACK LEASH (DungeonEvent::packLeash): no step walks the leader
             // on while the party is strung out behind it. Asked before every
             // movement-issuing branch below, and only here — between fights —

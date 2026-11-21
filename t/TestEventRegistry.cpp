@@ -41,6 +41,7 @@ namespace
         switch (s.kind)
         {
             case EventStepKind::TeleportParty:
+            case EventStepKind::UseGameObjectForGroup:
             case EventStepKind::DropInHole:
             case EventStepKind::Jump:
             case EventStepKind::RawPath:
@@ -98,6 +99,7 @@ namespace
                 case EventStepKind::EscortCreature:
                 case EventStepKind::DropInHole:
                 case EventStepKind::TeleportParty:
+                case EventStepKind::UseGameObjectForGroup:
                     return true;
                 default:
                     break;
@@ -617,6 +619,7 @@ TEST(DungeonEventIntegrityTest, AnchoredStepsOwnMovementEventsCanLatchActive)
         EventStep const& front = ev.steps.front();
         bool const latchable =
             front.kind == EventStepKind::MoveTo ||
+            front.kind == EventStepKind::UseGameObjectForGroup ||
             (front.kind == EventStepKind::Custom && ev.stepsOwnMovement);
 
         EXPECT_TRUE(latchable)
@@ -627,8 +630,8 @@ TEST(DungeonEventIntegrityTest, AnchoredStepsOwnMovementEventsCanLatchActive)
                " IsPersistentAnchoredEventActive is false while those steps walk the"
                " tank off the anchor, DungeonClearAtObjectiveTrigger drops back to a"
                " plain arriveRadius test, and Advance fights the event for the tank"
-               " until the step times out. Lead with a MoveTo, or make the front step"
-               " a Custom driver hook.";
+               " until the step times out. Lead with a step that owns movement"
+               " from step zero.";
     }
 }
 
@@ -1462,6 +1465,8 @@ TEST(DungeonEventIntegrityTest, StepsOwnMovementIsConfinedToVettedEvents)
         // Karazhan "Climb out from under the Guardian's Library": hook 65 teleports
         // the party back up; the per-tick hold has no anchor to hold it at.
         {532, 4},
+        // Each Naxx40 portal member approaches and clicks from its own position.
+        {533, 53301}, {533, 53302}, {533, 53303}, {533, 53304},
     };
 
     for (DungeonEvent const& ev : DungeonEventRegistry::AllEvents())
@@ -2639,4 +2644,62 @@ TEST(DungeonEventNaxx40Horsemen, RequiresTheWholeFightAfterEngagingMograine)
               BossStateGateVerdict::Restart);
     EXPECT_EQ(DecideBossStateGate(3, hold.bossStateClearMask, hold.restartOnBossStateMask),
               BossStateGateVerdict::Clear);
+}
+
+TEST(DungeonEventNaxx40QuarterPortals, BindOrderedObjectivesToNativeGroupClicks)
+{
+    struct Exit
+    {
+        uint32 event;
+        uint32 objective;
+        uint32 order;
+        uint32 boss;
+        uint32 portal;
+    };
+    constexpr Exit exits[] = {
+        {53301, 201, 25, 351006, 181575},
+        {53302, 202, 55, 351020, 181577},
+        {53303, 203, 85, BossRosterRegistry::ObjectiveEntry(200), 181578},
+        {53304, 204, 125, 351000, 181576},
+    };
+    DcDiffKey const naxx40 = DcDiffKey::Raid(2);
+    auto const roster = BossRosterRegistry::Apply(533, naxx40, {});
+    for (Exit const& exit : exits)
+    {
+        auto const objective = std::find_if(roster.begin(), roster.end(),
+            [&exit](DungeonBossInfo const& row)
+            {
+                return row.entry == BossRosterRegistry::ObjectiveEntry(exit.objective);
+            });
+        ASSERT_NE(objective, roster.end());
+        EXPECT_EQ(objective->kind, DungeonAnchorKind::Objective);
+        EXPECT_EQ(objective->eventId, exit.event);
+        EXPECT_EQ(BossOrderKey(*objective), exit.order);
+        EXPECT_NE(objective->availableWhen, nullptr);
+
+        DungeonEvent const* event = DungeonEventRegistry::Find(533, exit.event, naxx40);
+        ASSERT_NE(event, nullptr);
+        EXPECT_EQ(event->activation, EventActivation::Anchored);
+        EXPECT_EQ(event->panelSortAfterBossEntry, exit.boss);
+        EXPECT_TRUE(event->required);
+        EXPECT_TRUE(event->persistent);
+        ASSERT_EQ(event->steps.size(), 1u);
+        EventStep const& click = event->steps.front();
+        EXPECT_EQ(click.kind, EventStepKind::UseGameObjectForGroup);
+        EXPECT_EQ(click.goEntry, exit.portal);
+        EXPECT_FLOAT_EQ(click.x, objective->x);
+        EXPECT_FLOAT_EQ(click.y, objective->y);
+        EXPECT_FLOAT_EQ(click.z, objective->z);
+    }
+}
+
+TEST(DungeonEventNaxx40QuarterPortals, OtherDifficultiesKeepTheirOriginalRoster)
+{
+    for (DcDiffKey const difficulty : {DcDiffKey::Raid(0), DcDiffKey::Raid(1),
+                                      DcDiffKey::Raid(3), DcDiffKey::Dungeon(2)})
+    {
+        EXPECT_TRUE(BossRosterRegistry::Apply(533, difficulty, {}).empty());
+        for (uint32 id : {53301u, 53302u, 53303u, 53304u})
+            EXPECT_EQ(DungeonEventRegistry::Find(533, id, difficulty), nullptr);
+    }
 }
