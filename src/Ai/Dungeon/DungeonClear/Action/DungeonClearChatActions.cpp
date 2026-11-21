@@ -1229,18 +1229,7 @@ bool DcGoAction::Execute(Event event)
         context->GetValue<std::unordered_set<uint32>&>(DcKey::Skipped)->Get();
     skipped.erase(matched->entry);
 
-    uint32 destination = matched->entry;
-    if (matched->kind == DungeonAnchorKind::Boss)
-        for (DungeonBossInfo const& objective : bosses)
-            if (objective.preparesBossEntry == matched->entry &&
-                !AI_VALUE(std::unordered_set<uint32>&, DcKey::ClearedAnchors).count(objective.entry) &&
-                !DcAnchorDoneByInstanceScript(objective, inst))
-            {
-                skipped.erase(objective.entry);
-                destination = objective.entry;
-                break;
-            }
-    DcRun::Of(context).selectedBossEntry = destination;
+    DcRun::Of(context).selectedBossEntry = matched->entry;
 
     // Explicitly targeting a boss is a "go now" intent — clear any pause so the
     // tank actually starts moving toward it instead of holding.

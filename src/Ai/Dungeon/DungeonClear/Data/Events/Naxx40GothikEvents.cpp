@@ -14,6 +14,7 @@
 #include "Ai/Dungeon/DungeonClear/Util/DcMovement.h"
 #include "Ai/Dungeon/DungeonClear/Util/DcRezRecovery.h"
 #include "Ai/Dungeon/DungeonClear/Util/DcRun.h"
+#include "Ai/Dungeon/DungeonClear/Util/DcStatusPublisher.h"
 
 #include "Creature.h"
 #include "Event.h"
@@ -36,13 +37,12 @@ namespace
 
     constexpr uint32 BossSlot = 11;
     constexpr uint32 BossGuidSlot = 105;
-    constexpr uint32 EventId = 53320;
+    constexpr uint32 GOTHIK_PREP_EVENT = 53320;
     constexpr uint32 HookId = 53320;
-    constexpr uint32 PositionEntry = BossRosterRegistry::ObjectiveEntry(20);
     constexpr int32 PreparationOrder = 65;
     constexpr uint32 Shoot = 3018;
     constexpr char BossName[] = "Gothik the Harvester";
-    constexpr char PreparationName[] = "Living-side preparation";
+    constexpr char PreparationName[] = "Gothik living-side preparation";
 
     // The raid stays on the dry living-side floor below the balcony.
     constexpr float PullX = 2659.0f;
@@ -57,15 +57,15 @@ namespace
         return bot->GetInstanceScript();
     }
 
-    bool LivingSideReady(Player* tank)
+    Player* OutsideLivingSide(Player* tank)
     {
         SealedEncounterRow const* room = SealedEncounterRegistry::Find(MapId, Entry);
         if (!room)
-            return false;
+            return tank;
 
         Group* group = tank->GetGroup();
         if (!group)
-            return true;
+            return nullptr;
 
         for (Group::MemberSlot const& slot : group->GetMemberSlots())
         {
@@ -75,9 +75,15 @@ namespace
             if (member->IsBeingTeleported() || !member->InSamePhase(tank) ||
                 !SealedEncounterRegistry::InSealedRoom(*room, member->GetPositionX(),
                     member->GetPositionY(), member->GetPositionZ()))
-                return false;
+                return member;
         }
-        return true;
+        return nullptr;
+    }
+
+    void ReportOpenerHold(PlayerbotAI* ai, AiObjectContext* context, std::string const& reason)
+    {
+        if (!DcRun::Of(context).Throttled(DcThrottle::StationaryBossOpenerNotice, 15000))
+            DcStatusPublisher::SendAddonMessage(ai, "CHAT\tGothik: " + reason);
     }
 
     Result ShootFromLivingSide(Player* tank, AiObjectContext* context, DungeonBossInfo const&)
@@ -102,8 +108,14 @@ namespace
             return Result::Running;
 
         DcMovement::StopBot(tank, DcMovement::Stop::HardPin);
-        if (DcCombatFlag::AnyPartyEngagement(tank) || DcRezRecovery::IsPending(tank) ||
-            !LivingSideReady(tank) || DcActionShared::PauseAtBoss(ai, boss, BossName, Event()))
+        if (DcCombatFlag::AnyPartyEngagement(tank) || DcRezRecovery::IsPending(tank))
+            return Result::Running;
+        if (Player* member = OutsideLivingSide(tank))
+        {
+            ReportOpenerHold(ai, context, "waiting for " + member->GetName() + " on the living-side floor.");
+            return Result::Running;
+        }
+        if (DcActionShared::PauseAtBoss(ai, boss, BossName, Event()))
             return Result::Running;
 
         if (DcRun::Of(context).Throttled(DcThrottle::StationaryBossOpener, 3000))
@@ -112,15 +124,17 @@ namespace
         auto const shot = DcActionShared::ResolveRangedWeaponPull(ai, tank);
         if (!shot || shot->spellId != Shoot)
         {
-            LOG_DEBUG("playerbots.dungeonclear", "[DC:{}] Gothik opener needs a bow, gun or crossbow with ammunition",
-                      tank->GetName());
+            ReportOpenerHold(ai, context, "the tank needs a bow, gun or crossbow and suitable ammunition.");
             return Result::Running;
         }
 
         float const distance = tank->GetExactDist(boss);
         if (!tank->IsValidAttackTarget(boss) || distance < shot->minRange ||
             distance > shot->maxRange || !tank->IsWithinLOSInMap(boss))
+        {
+            ReportOpenerHold(ai, context, "the balcony target is unavailable or outside the shot's range or line of sight.");
             return Result::Running;
+        }
 
         tank->SetSelection(boss->GetGUID());
         if (!tank->HasInArc(CAST_ANGLE_IN_FRONT, boss))
@@ -144,13 +158,14 @@ bool DcNaxx40Gothik::AwaitingOpener(Player* bot)
 
 void RegisterNaxx40GothikEvents(std::vector<DungeonEvent>& out)
 {
-    out.push_back(EventBuilder(MapId, EventId, PreparationName)
+    out.push_back(EventBuilder(533, GOTHIK_PREP_EVENT, PreparationName)
         .Anchored(PreparationOrder)
         .ForDifficulty(DcDiffKey::Raid(2))
         .Persistent()
         .StepsOwnMovement()
         .MoveTo(PullX, PullY, PullZ, ArrivalRadius)
         .Custom(DC_HOOK_RAID_MUSTER)
+            .Timeout(240000)
         .Custom(HookId).Timeout(300000)
         .Build());
 }
@@ -158,11 +173,11 @@ void RegisterNaxx40GothikEvents(std::vector<DungeonEvent>& out)
 void RegisterNaxx40GothikRoster(std::vector<BossRosterPatch>& out)
 {
     BossRosterPatch patch;
-    patch.mapId = MapId;
+    patch.mapId = 533;
     patch.exactDifficulty = DcDiffKey::Raid(2);
     DungeonBossInfo preparation = DcRoster::MakeObjective(
-        PositionEntry, PreparationOrder, MapId, PreparationName,
-        PullX, PullY, PullZ, 5.0f, 0, 0, EventId, PreparationOrder);
+        DcRoster::OBJ(20), 7, 533, PreparationName,
+        PullX, PullY, PullZ, 5.0f, 0, 0, GOTHIK_PREP_EVENT, PreparationOrder);
     preparation.doneBossStateIndex = BossSlot;
     preparation.preparesBossEntry = Entry;
     patch.add.push_back(std::move(preparation));

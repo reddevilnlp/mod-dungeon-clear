@@ -1528,6 +1528,7 @@ void DcTestRunJob::TickStarting()
             ref.encounterIndex = b.encounterIndex;
             ref.name = b.name;
             ref.isBoss = b.kind == DungeonAnchorKind::Boss;
+            ref.preparesBossEntry = b.preparesBossEntry;
             _roster.push_back(ref);
             // Objectives (anchor kinds) carry no name worth aggregating across a
             // plan — only real bosses go into the reported roster.
@@ -1661,7 +1662,9 @@ void DcTestRunJob::ApplyScenarioSkips(Player* tank, AiObjectContext* ctx)
     std::unordered_set<uint32>& skipped =
         ctx->GetValue<std::unordered_set<uint32>&>(DcKey::Skipped)->Get();
     for (BossRef const& ref : _roster)
-        if (std::find(_focus.begin(), _focus.end(), ref.entry) == _focus.end())
+        if (std::find(_focus.begin(), _focus.end(), ref.entry) == _focus.end() &&
+            (!ref.preparesBossEntry ||
+             std::find(_focus.begin(), _focus.end(), ref.preparesBossEntry) == _focus.end()))
             skipped.insert(ref.entry);
 }
 

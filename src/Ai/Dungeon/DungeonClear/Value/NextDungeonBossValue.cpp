@@ -176,7 +176,19 @@ std::optional<DungeonBossInfo> NextDungeonBossValue::Calculate()
                     break;
                 }
 
-                // Force return this boss and update sticky
+                // A pinned boss still needs its registered opener. Focused
+                // lab runs skip all other entries by default, so honor this
+                // prerequisite even when it was left out of the focus list.
+                if (info.kind == DungeonAnchorKind::Boss)
+                    for (DungeonBossInfo const& preparation : bosses)
+                        if (preparation.preparesBossEntry == info.entry &&
+                            !preparation.skipByDesign && !cleared.count(preparation.entry) &&
+                            !DcAnchorDoneByInstanceScript(preparation, inst))
+                        {
+                            context->GetValue<uint32>(DcKey::StickyBoss)->Set(preparation.entry);
+                            return preparation;
+                        }
+
                 context->GetValue<uint32>(DcKey::StickyBoss)->Set(info.entry);
                 return info;
             }
