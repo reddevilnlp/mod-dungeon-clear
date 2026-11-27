@@ -12,6 +12,7 @@
 #include "gtest/gtest.h"
 
 #include <algorithm>
+#include <tuple>
 #include <vector>
 
 #include "Ai/Dungeon/DungeonClear/Data/DungeonEventRegistry.h"
@@ -140,23 +141,34 @@ namespace
 
 TEST(DcNaxxramasTest, WingPortalsTeleportToTheHub)
 {
-    ExpectWingPortal(1, 15952, DcDifficultyGate::Any, 3465.16f, -3940.45f, 308.788f);  // Maexxna
-    ExpectWingPortal(2, 16011, DcDifficultyGate::Any, 2909.0f, -4025.02f, 273.475f);   // Loatheb
-    ExpectWingPortal(3, 15928, DcDifficultyGate::Any, 3539.02f, -2936.82f, 302.476f);  // Thaddius
-    // The Horsemen portal once per tier, listed after that tier's anchor.
-    ExpectWingPortal(4, kRivendare, DcDifficultyGate::NormalOnly, 2493.02f, -2921.78f, 241.193f);
-    ExpectWingPortal(5, kMograine, DcDifficultyGate::HeroicOnly, 2493.02f, -2921.78f, 241.193f);
+    // Each portal once per tier, listed after the wing boss that tier's roster
+    // carries (the panel hides an event whose boss is not in the roster).
+    constexpr auto N = DcDifficultyGate::NormalOnly;
+    constexpr auto H = DcDifficultyGate::HeroicOnly;
+    ExpectWingPortal(1, 15952, N, 3465.16f, -3940.45f, 308.788f);   // Maexxna
+    ExpectWingPortal(7, 351006, H, 3465.16f, -3940.45f, 308.788f);
+    ExpectWingPortal(2, 16011, N, 2909.0f, -4025.02f, 273.475f);    // Loatheb
+    ExpectWingPortal(8, 351020, H, 2909.0f, -4025.02f, 273.475f);
+    ExpectWingPortal(3, 15928, N, 3539.02f, -2936.82f, 302.476f);   // Thaddius
+    ExpectWingPortal(9, 351000, H, 3539.02f, -2936.82f, 302.476f);
+    ExpectWingPortal(4, kRivendare, N, 2493.02f, -2921.78f, 241.193f);  // Horsemen
+    ExpectWingPortal(5, kMograine, H, 2493.02f, -2921.78f, 241.193f);
 }
 
-TEST(DcNaxxramasTest, HubTeleportsToTheFrostwyrmLair)
+class DcNaxxramasLairTest : public ::testing::TestWithParam<std::tuple<uint32, DcDifficultyGate, uint32>>
 {
-    DungeonEvent const* ev = DungeonEventRegistry::Find(kMap, 6);
+};
+
+TEST_P(DcNaxxramasLairTest, HubTeleportsToTheFrostwyrmLair)
+{
+    auto const [id, gate, thaddius] = GetParam();
+    DungeonEvent const* ev = DungeonEventRegistry::Find(kMap, id);
     ASSERT_NE(ev, nullptr);
     EXPECT_EQ(ev->activation, EventActivation::Conditional);
     EXPECT_TRUE(static_cast<bool>(ev->condition));
     EXPECT_TRUE(ev->repeatable) << "a wipe in the lair sends the raid back to the hub";
-    EXPECT_EQ(ev->gate, DcDifficultyGate::Any);
-    EXPECT_EQ(ev->panelSortAfterBossEntry, 15928u) << "listed just before Sapphiron";
+    EXPECT_EQ(ev->gate, gate);
+    EXPECT_EQ(ev->panelSortAfterBossEntry, thaddius) << "listed just before Sapphiron";
     ASSERT_EQ(ev->steps.size(), 1u);
     EventStep const& s = ev->steps[0];
     EXPECT_EQ(s.kind, EventStepKind::TeleportParty);
@@ -169,10 +181,14 @@ TEST(DcNaxxramasTest, HubTeleportsToTheFrostwyrmLair)
     EXPECT_NEAR(s.landZ, 144.968f, 0.01f);
 }
 
-TEST(DcNaxxramasTest, EachTierGetsOneHorsemenPortal)
+INSTANTIATE_TEST_SUITE_P(DcNaxxramas, DcNaxxramasLairTest,
+                         ::testing::Values(std::make_tuple(6u, DcDifficultyGate::NormalOnly, 15928u),
+                                           std::make_tuple(10u, DcDifficultyGate::HeroicOnly, 351000u)));
+
+TEST(DcNaxxramasTest, EachTierGetsOneCopyOfEveryEvent)
 {
     std::vector<uint32> const normal = {1, 2, 3, 4, 6};
-    std::vector<uint32> const forty = {1, 2, 3, 5, 6};
+    std::vector<uint32> const forty = {5, 7, 8, 9, 10};
     EXPECT_EQ(ConditionalIds(DcDiffKey::Raid(RAID_DIFFICULTY_10MAN_NORMAL)), normal);
     EXPECT_EQ(ConditionalIds(DcDiffKey::Raid(RAID_DIFFICULTY_25MAN_NORMAL)), normal);
     EXPECT_EQ(ConditionalIds(DcDiffKey::Raid(RAID_DIFFICULTY_10MAN_HEROIC)), forty);
