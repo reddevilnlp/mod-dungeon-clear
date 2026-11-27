@@ -129,6 +129,17 @@ struct RoomAggroBoss
     // sk-20261019-003633 was a wake there with 16-21 balcony mobs still alive to
     // answer his CallForHelp. 0 (every other row) = no boss-side ordering.
     float  bossSideLastRadius{0.0f};
+
+    // Optional: the entries the Y band applies to. EMPTY (every row but one) =
+    // the band, when set, filters every member, as it always has. Non-empty =
+    // only these entries must sit inside the band; every other member counts at
+    // any Y. Mirrors a script that links a whole room but filters only some
+    // entries by position. Patchwerk (Naxxramas 40) is the case:
+    // instance_naxxramas OnCreatureCreate links every Patchwork Golem, Mad
+    // Scientist, Living Monstrosity and Surgical Assistant, but a Bile Retcher
+    // or Sludge Belcher only when Y > -3258. The linked golems reach Y -3383, so
+    // a band over the whole row would drop them.
+    std::vector<uint32> bandEntries{};
 };
 
 class RoomAggroRegistry
@@ -152,6 +163,11 @@ public:
     // boss has no Y band (then every Y qualifies). Mirrors the script's own
     // ROOM_EXIT < Y < ROOM_ENTERANCE guard. Pure — unit-testable.
     static bool InRoomBand(RoomAggroBoss const& boss, float worldY);
+
+    // InRoomBand for one candidate entry: true when the band does not apply to
+    // `entry` (see RoomAggroBoss::bandEntries), else InRoomBand(boss, worldY).
+    // Pure — unit-testable.
+    static bool InRoomBand(RoomAggroBoss const& boss, uint32 entry, float worldY);
 
     // True when (worldX, worldY) is inside the boss's camp box, or the boss has
     // no camp box (then every point qualifies). Inclusive bounds. Pure —

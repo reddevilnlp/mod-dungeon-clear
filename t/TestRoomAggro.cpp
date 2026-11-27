@@ -53,6 +53,43 @@ TEST(RoomAggroRegistryTest, NoYBandAdmitsAnyWorldY)
     EXPECT_TRUE(RoomAggroRegistry::InRoomBand(boss, 9999.0f));
 }
 
+// Without bandEntries the per-entry overload is the plain band check.
+TEST(RoomAggroRegistryTest, EntryBandWithoutBandEntriesFiltersEveryMember)
+{
+    RoomAggroBoss const* b = RoomAggroRegistry::Find(557, 18341);  // Pandemonius
+    ASSERT_NE(b, nullptr);
+    ASSERT_TRUE(b->bandEntries.empty());
+    EXPECT_TRUE(RoomAggroRegistry::InRoomBand(*b, 18309u, -97.0f));
+    EXPECT_FALSE(RoomAggroRegistry::InRoomBand(*b, 18309u, -160.0f));
+    EXPECT_FALSE(RoomAggroRegistry::InRoomBand(*b, 18311u, -30.0f));
+}
+
+// Patchwerk 40 mirrors IP instance_naxxramas: golems, scientists, monstrosities
+// and surgical assistants at any Y; retchers and belchers only above Y -3258.
+TEST(RoomAggroRegistryTest, Patchwerk40BandsOnlyRetchersAndBelchers)
+{
+    RoomAggroBoss const* b = RoomAggroRegistry::Find(533, 351028);
+    ASSERT_NE(b, nullptr);
+    EXPECT_FLOAT_EQ(b->radius, 335.0f);
+    EXPECT_EQ(b->memberEntries,
+              (std::vector<uint32>{351021, 351022, 351023, 351024, 351025, 351029}));
+    EXPECT_EQ(b->bandEntries, (std::vector<uint32>{351022, 351029}));
+
+    // A golem far south of the cut (live spawn 361146 at Y -3383.1) is linked.
+    EXPECT_TRUE(RoomAggroRegistry::InRoomBand(*b, 351021u, -3383.1f));
+    // Retcher 361155 (Y -3342.5) and belcher 361322 (Y -3301.8) are not.
+    EXPECT_FALSE(RoomAggroRegistry::InRoomBand(*b, 351022u, -3342.5f));
+    EXPECT_FALSE(RoomAggroRegistry::InRoomBand(*b, 351029u, -3301.8f));
+    // Retcher 361325 (Y -3235.3) and belcher 361324 (Y -3244.1) are.
+    EXPECT_TRUE(RoomAggroRegistry::InRoomBand(*b, 351022u, -3235.3f));
+    EXPECT_TRUE(RoomAggroRegistry::InRoomBand(*b, 351029u, -3244.1f));
+    // Strict bound, matching the script's Y > -3258.
+    EXPECT_FALSE(RoomAggroRegistry::InRoomBand(*b, 351022u, -3258.0f));
+
+    // The WotLK Patchwerk is not flagged.
+    EXPECT_EQ(RoomAggroRegistry::Find(533, 16028), nullptr);
+}
+
 TEST(RoomAggroRegistryTest, UnflaggedBossReturnsNull)
 {
     // Right map, wrong entry.

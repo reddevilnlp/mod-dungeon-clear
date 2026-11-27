@@ -243,8 +243,9 @@ GuidVector DungeonClearRoomTrashValue::Calculate()
         // the adds standing BEHIND him toward the next boss are never pulled). For
         // those rooms, an add outside the band is not part of the pull and must NOT
         // be chased: keeping it makes the tank orbit the boss after an unreachable
-        // straggler until the timeout fires. No band -> every Y qualifies.
-        if (!RoomAggroRegistry::InRoomBand(*room, u->GetPositionY()))
+        // straggler until the timeout fires. No band -> every Y qualifies. A row
+        // with bandEntries filters only those entries (Patchwerk 40).
+        if (!RoomAggroRegistry::InRoomBand(*room, u->GetEntry(), u->GetPositionY()))
         {
             ++exBand;
             continue;

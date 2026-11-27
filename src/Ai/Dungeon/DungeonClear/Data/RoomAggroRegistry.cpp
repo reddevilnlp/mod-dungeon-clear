@@ -301,6 +301,33 @@ namespace
           /*pullOutRadius*/ 12.0f, /*skirtRadius*/ 32.0f,
           /*hasCampBox*/ true, /*campMinX*/ -11013.0f, /*campMaxX*/ -10900.0f,
           /*campMinY*/ -1940.0f, /*campMaxY*/ -1800.0f },
+
+        // Naxxramas 40 (533, mod-individual-progression) — Patchwerk 351028. Not a
+        // radius pull: instance_naxxramas OnCreatureCreate collects the Construct
+        // Quarter trash into _patchwerkRoomTrash, and SetBossState(BOSS_PATCHWERK,
+        // IN_PROGRESS) makes every live, out-of-combat member AttackStart his
+        // victim, at any distance. So everything on that list must be dead first.
+        //
+        // The list: every Patchwork Golem 351021, Mad Scientist 351023, Living
+        // Monstrosity 351024 and Surgical Assistant 351025; a Bile Retcher 351022
+        // or Sludge Belcher 351029 only when its Y > -3258 ("only those inside the
+        // room, not before"). bandEntries applies the band to those two alone: the
+        // golems reach Y -3383 and are linked anyway.
+        //
+        // radius 335 is measured, not read from the script (it has none). World
+        // DB, spawnMask 4: Patchwerk at (3308.5, -3232.1); the 72 linked mobs sit
+        // 143.5-329.5yd from him, the farthest the scientist pack at the quarter's
+        // west end. The five unlinked retchers and belchers (Y <= -3258) sit
+        // 153.5-252.1yd out and the band drops them. The far-target scan reaches
+        // 4 x SightDistance (400yd by default) around the tank, so the whole set
+        // is visible from his room. The WotLK 10/25 Patchwerk (16028) has no such
+        // link and stays unflagged.
+        { 533, 351028, 335.0f, { 351021, 351022, 351023, 351024, 351025, 351029 },
+          /*hasYBand*/ true, /*minY*/ -3258.0f, /*maxY*/ 0.0f,
+          /*pullOutRadius*/ 0.0f, /*skirtRadius*/ 0.0f,
+          /*hasCampBox*/ false, 0.0f, 0.0f, 0.0f, 0.0f,
+          /*detourReachable*/ false, /*bossSideLastRadius*/ 0.0f,
+          /*bandEntries*/ { 351022, 351029 } },
     };
 }
 
@@ -331,6 +358,14 @@ bool RoomAggroRegistry::InRoomBand(RoomAggroBoss const& boss, float worldY)
     if (!boss.hasYBand)
         return true;
     return worldY > boss.minY && worldY < boss.maxY;
+}
+
+bool RoomAggroRegistry::InRoomBand(RoomAggroBoss const& boss, uint32 entry, float worldY)
+{
+    if (!boss.bandEntries.empty() &&
+        std::find(boss.bandEntries.begin(), boss.bandEntries.end(), entry) == boss.bandEntries.end())
+        return true;
+    return InRoomBand(boss, worldY);
 }
 
 bool RoomAggroRegistry::InCampBox(RoomAggroBoss const& boss, float worldX, float worldY)
