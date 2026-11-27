@@ -47,19 +47,26 @@
 //     casts 28444 and lands the user in the hub. Without it the clear walks the
 //     whole wing back to reach the next one. One Conditional event per wing
 //     teleports the raid from the portal to 28444's landing once the wing's last
-//     bit is set and the leader is still near the portal. The bit is the same
-//     completion signal the roster reads, so the event cannot fire before the
-//     boss row is done, and the proximity gate keeps it from firing anywhere but
-//     at the end of that wing.
+//     boss is DONE and the leader is still near the portal. The proximity gate
+//     keeps it from firing anywhere but at the end of that wing.
 //
-//   * FROSTWYRM LAIR. Sapphiron (bit 13) and Kel'Thuzad (bit 14) sit in a lair
-//     with no walkable link to the rest of the map. at_naxxramas_hub_portal
-//     (areatrigger 4156, in the hub) teleports a player there once all four wing
-//     bosses are DONE. The event does the same for the raid: all four wing bits
-//     set, Kel'Thuzad not yet dead, leader in the hub. REPEATABLE so a wipe in
-//     the lair, which sends the raid back to the zone-in beside the hub, re-arms
-//     it; the proximity gate reads false the moment the raid has left the hub, so
-//     it cannot spin.
+//   * FROSTWYRM LAIR. Sapphiron and Kel'Thuzad sit in a lair with no walkable
+//     link to the rest of the map. at_naxxramas_hub_portal (areatrigger 4156, in
+//     the hub) teleports a player there once all four wing bosses are DONE. The
+//     event does the same for the raid: all four wing bosses DONE, Kel'Thuzad
+//     not, leader in the hub. REPEATABLE so a wipe in the lair, which sends the
+//     raid back to the zone-in beside the hub, re-arms it; the proximity gate
+//     reads false the moment the raid has left the hub, so it cannot spin.
+//
+// DONE IS THE INSTANCE SCRIPT'S BOSS STATE, NOT THE ENCOUNTER MASK. The portals
+// themselves (ActivateWingPortal) and at_naxxramas_hub_portal key off
+// GetBossState(BOSS_*), and so do these conditions. The DBC completion mask is
+// not enough: Individual Progression's 40-man script never calls
+// UpdateEncounterState, and its bosses are custom entries (Maexxna is 351006)
+// that match no DungeonEncounter credit, so at difficulty 2 the mask stays 0
+// all run. Live, the first 40-man run killed Maexxna 50yd from her portal, the
+// event never armed, and the raid walked back down the Arachnid Quarter. The
+// BOSS_* ids below are the ones naxxramas.h gives both the core and IP scripts.
 //
 // Both use TeleportParty: the leader walks to the checkpoint (the portal, or the
 // hub), the step waits out any fight there, then the whole raid is relocated.
@@ -76,15 +83,18 @@ namespace
     constexpr uint32 kBaronRivendare   = 30549;   // 10/25-man horseman
     constexpr uint32 kHighlordMograine = 351037;  // Individual Progression 40-man horseman
 
-    // Wing-end bosses (panel placement) and their DungeonEncounter bits.
+    // Wing-end bosses (panel placement).
     constexpr uint32 kMaexxna  = 15952;
     constexpr uint32 kLoatheb  = 16011;
     constexpr uint32 kThaddius = 15928;
 
-    constexpr uint32 kMaexxnaBit   = 2;
-    constexpr uint32 kLoathebBit   = 5;
-    constexpr uint32 kThaddiusBit  = 12;
-    constexpr uint32 kKelThuzadBit = 14;
+    // The instance script's boss-state slots (naxxramas.h BOSS_*, identical in
+    // the core and IP scripts) — a different index space from the DBC bits.
+    constexpr uint32 kBossLoatheb   = 5;   // BOSS_LOATHEB
+    constexpr uint32 kBossMaexxna   = 8;   // BOSS_MAEXXNA
+    constexpr uint32 kBossThaddius  = 9;   // BOSS_THADDIUS
+    constexpr uint32 kBossHorsemen  = 12;  // BOSS_HORSEMAN
+    constexpr uint32 kBossKelThuzad = 14;  // BOSS_KELTHUZAD
 
     // Hub landing: spell_target_position of 28444, the wing portals' teleport.
     constexpr float kHubX = 3005.51f, kHubY = -3434.64f, kHubZ = 304.195f;
@@ -121,34 +131,35 @@ namespace
     constexpr uint32 kEventHorsemenPortal40 = 5;  // IP 40-man
     constexpr uint32 kEventFrostwyrmLair    = 6;
 
-    bool BitDone(Player* bot, uint32 bit)
+    bool BossDone(InstanceScript* inst, uint32 bossId)
     {
-        InstanceScript* inst = DcTargeting::GetInstanceScript(bot);
-        return inst && (inst->GetCompletedEncounterMask() & (1u << bit));
+        return inst->GetBossState(bossId) == DONE;
     }
 
-    EventCondition WingPortalDue(uint32 bit, WingPortal portal)
+    EventCondition WingPortalDue(uint32 bossId, WingPortal portal)
     {
-        return [bit, portal](Player* bot, AiObjectContext* /*context*/)
+        return [bossId, portal](Player* bot, AiObjectContext* /*context*/)
         {
-            return BitDone(bot, bit) &&
+            InstanceScript* inst = DcTargeting::GetInstanceScript(bot);
+            return inst && BossDone(inst, bossId) &&
                    bot->GetDistance(portal.x, portal.y, portal.z) <= kPortalArmRange;
         };
     }
 
     bool FrostwyrmLairDue(Player* bot, AiObjectContext* /*context*/)
     {
-        return BitDone(bot, kMaexxnaBit) && BitDone(bot, kLoathebBit) &&
-               BitDone(bot, kThaddiusBit) && BitDone(bot, kFourHorsemenBit) &&
-               !BitDone(bot, kKelThuzadBit) &&
+        InstanceScript* inst = DcTargeting::GetInstanceScript(bot);
+        return inst && BossDone(inst, kBossMaexxna) && BossDone(inst, kBossLoatheb) &&
+               BossDone(inst, kBossThaddius) && BossDone(inst, kBossHorsemen) &&
+               !BossDone(inst, kBossKelThuzad) &&
                bot->GetDistance(kHubX, kHubY, kHubZ) <= kHubArmRange;
     }
 
-    DungeonEvent WingPortalEvent(uint32 id, char const* name, uint32 bit, WingPortal portal,
+    DungeonEvent WingPortalEvent(uint32 id, char const* name, uint32 bossId, WingPortal portal,
                                  uint32 wingBoss)
     {
         return EventBuilder(kMapId, id, name)
-            .Conditional(WingPortalDue(bit, portal))
+            .Conditional(WingPortalDue(bossId, portal))
             .PanelAfterBoss(wingBoss)
             .TeleportParty(portal.x, portal.y, portal.z, kHubX, kHubY, kHubZ, kPortalReach)
             .Build();
@@ -158,26 +169,26 @@ namespace
 void RegisterNaxxramasEvents(std::vector<DungeonEvent>& out)
 {
     out.push_back(WingPortalEvent(kEventMaexxnaPortal, "Take the Arachnid Quarter portal",
-                                  kMaexxnaBit, kMaexxnaPortal, kMaexxna));
+                                  kBossMaexxna, kMaexxnaPortal, kMaexxna));
     out.push_back(WingPortalEvent(kEventLoathebPortal, "Take the Plague Quarter portal",
-                                  kLoathebBit, kLoathebPortal, kLoatheb));
+                                  kBossLoatheb, kLoathebPortal, kLoatheb));
     out.push_back(WingPortalEvent(kEventThaddiusPortal, "Take the Construct Quarter portal",
-                                  kThaddiusBit, kThaddiusPortal, kThaddius));
+                                  kBossThaddius, kThaddiusPortal, kThaddius));
 
     // The Horsemen's portal twice, once per roster anchor, so the `dc bosses`
     // panel lists it after the horseman that tier actually has (the panel hides
     // an event whose boss is missing from the roster).
     DungeonEvent horsemen = WingPortalEvent(kEventHorsemenPortal, "Take the Military Quarter portal",
-                                            kFourHorsemenBit, kHorsemenPortal, kBaronRivendare);
+                                            kBossHorsemen, kHorsemenPortal, kBaronRivendare);
     horsemen.gate = DcDifficultyGate::NormalOnly;
     out.push_back(std::move(horsemen));
 
     DungeonEvent horsemen40 = WingPortalEvent(kEventHorsemenPortal40, "Take the Military Quarter portal",
-                                              kFourHorsemenBit, kHorsemenPortal, kHighlordMograine);
+                                              kBossHorsemen, kHorsemenPortal, kHighlordMograine);
     horsemen40.gate = DcDifficultyGate::HeroicOnly;
     out.push_back(std::move(horsemen40));
 
-    // Listed after Thaddius (bit 12), i.e. just before Sapphiron (13), whichever
+    // Listed after Thaddius (DBC bit 12), i.e. just before Sapphiron (13), whichever
     // wing the raid finishes last.
     out.push_back(EventBuilder(kMapId, kEventFrostwyrmLair, "Enter the Frostwyrm Lair")
                       .Conditional(&FrostwyrmLairDue)
