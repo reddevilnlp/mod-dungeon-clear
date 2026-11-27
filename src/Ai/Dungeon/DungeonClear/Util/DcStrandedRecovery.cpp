@@ -5,16 +5,22 @@
 
 #include "DcStrandedRecovery.h"
 
+#include "Ai/Dungeon/DungeonClear/Action/DcActionShared.h"
 #include "Ai/Dungeon/DungeonClear/Data/Events/DungeonEventTables.h"
 #include "Ai/Dungeon/DungeonClear/Data/DungeonBossInfo.h"
+#include "Ai/Dungeon/DungeonClear/Data/ScriptedPullRegistry.h"
 #include "Ai/Dungeon/DungeonClear/DcPullContext.h"
 #include "Ai/Dungeon/DungeonClear/DcValueKeys.h"
 #include "Ai/Dungeon/DungeonClear/Settings/DcSettings.h"
 #include "Ai/Dungeon/DungeonClear/Util/DcBossStandDown.h"
 #include "Ai/Dungeon/DungeonClear/Util/DcCombatFlag.h"
 #include "Ai/Dungeon/DungeonClear/Util/DcLeaderSignal.h"
+#include "Ai/Dungeon/DungeonClear/Util/DcMovement.h"
+#include "Ai/Dungeon/DungeonClear/Util/DcNaxx40AnubApproach.h"
 #include "Ai/Dungeon/DungeonClear/Util/DcNaxx40GluthTransit.h"
 #include "Ai/Dungeon/DungeonClear/Util/DcNaxx40Horsemen.h"
+#include "Ai/Dungeon/DungeonClear/Util/DcNaxx40SpiderQuarter.h"
+#include "Ai/Dungeon/DungeonClear/Util/DcNoStopZone.h"
 #include "Ai/Dungeon/DungeonClear/Util/DcPartyState.h"
 #include "Ai/Dungeon/DungeonClear/Util/DcPlayerbotCompat.h"
 #include "Ai/Dungeon/DungeonClear/Util/DcPullPlanner.h"
@@ -57,6 +63,13 @@ namespace
         return next && DcNaxx40GluthTransit::BlocksGeneric(owner, next->entry);
     }
 
+    float DistanceToCamp(Player const& member, Position const* camp, bool campOnly)
+    {
+        if (!camp)
+            return -1.0f;
+        return campOnly ? member.GetExactDist(camp) : member.GetDistance(*camp);
+    }
+
     // Walk the leader's same-map group into kernel rows and report whether the
     // party is FIGHTING. Recover re-walks the live group itself, so a plain value
     // snapshot is all the kernel needs here.
@@ -70,7 +83,7 @@ namespace
     // (Arcatraz heroic, tr-20260801-194932-20: followers parked 30yd back for 15
     // minutes, run killed by the no-progress watchdog). A real fight still blocks
     // the teleport and still counts as progress — that is what engagement means.
-    void BuildSnapshot(Player* anchor, Position const* camp,
+    void BuildSnapshot(Player* anchor, Position const* camp, bool campOnly,
                        std::vector<DcStrandedDecision::Member>& out, bool& partyEngaged)
     {
         partyEngaged = DcCombatFlag::AnyPartyEngagement(anchor);
@@ -91,7 +104,7 @@ namespace
             // A rider is never rescued (see Recover), so it is never a stray
             // either — otherwise Decide would ask for a rescue Recover refuses,
             // and ask again every tick.
-            if (member != anchor && member->GetVehicle())
+            if (member != anchor && (member->GetVehicle() || (campOnly && member->IsBeingTeleported())))
                 continue;
 
             DcStrandedDecision::Member m;
@@ -100,7 +113,7 @@ namespace
             m.onMap = member->GetMapId() == anchor->GetMapId();
             m.isTank = member == anchor;
             m.distToTank = anchor->GetDistance(member);
-            m.distToGate = camp ? member->GetDistance(*camp) : -1.0f;
+            m.distToGate = DistanceToCamp(*member, camp, campOnly);
             out.push_back(m);
         }
     }
@@ -142,10 +155,30 @@ namespace
         float maxSpread = 0.0f;             // past this from the tank: stranded
         Position const* camp = nullptr;     // a camp-anchored gate's origin; nullptr = tank-anchored
         float campSpread = 0.0f;            // ...and its radius
+        bool campOnly = false;
+        uint32 formingSince = 0;
     };
 
-    RescueBounds ResolveRescueBounds(Player* bot)
+    RescueBounds ResolveRescueBounds(Player* bot, Player* anchor)
     {
+        // Forming holds the tank at its commit point while followers travel to
+        // the authored camp. Its waived generic spread gate carries no camp.
+        if (bot == anchor && IsNaxx40Map(bot->FindMap()))
+        {
+            if (PlayerbotAI* ai = GET_PLAYERBOT_AI(bot))
+            {
+                AiObjectContext* const context = ai->GetAiObjectContext();
+                if (Position const* camp = DcNaxx40AnubApproach::ActiveCampHold(bot, context))
+                    return {0.0f, camp, DcActionShared::DC_PULL_SET_RADIUS, true,
+                            DcRun::Of(context).naxx40AnubApproach.campHoldSince};
+                DcPullContext const& pull = context->GetValue<DcPullContext&>(DcKey::PullContext)->Get();
+                if (pull.phase == DcPullPhase::Forming && pull.HasCamp() &&
+                    context->GetValue<bool>(DcKey::PullMode)->Get() &&
+                    DcNaxx40SpiderQuarter::IsStage(ScriptedPullRegistry::Find(bot->GetMapId(), pull.scriptedStage)))
+                    return {0.0f, &pull.camp, DcActionShared::DC_PULL_SET_RADIUS, true, pull.phaseSince};
+            }
+        }
+
         DcPartyState::SpreadGate const gate = DcPartyState::LeaderGate(bot);
         RescueBounds b;
         b.maxSpread = DcStrandedDecision::RescueSpread(
@@ -249,10 +282,10 @@ namespace DcStrandedRecovery
             return false;
         }
 
-        RescueBounds const bounds = ResolveRescueBounds(bot);
+        RescueBounds const bounds = ResolveRescueBounds(bot, driver.anchor);
         std::vector<DcStrandedDecision::Member> members;
         bool partyEngaged = false;
-        BuildSnapshot(driver.anchor, bounds.camp, members, partyEngaged);
+        BuildSnapshot(driver.anchor, bounds.camp, bounds.campOnly, members, partyEngaged);
 
         // A FIGHT re-arms the clock wholesale — a fight is progress, so neither a
         // long boss fight nor a between-pulls skirmish ever burns the budget. A
@@ -272,11 +305,18 @@ namespace DcStrandedRecovery
         in.partyEngaged = partyEngaged;
         in.maxSpread = bounds.maxSpread;
         in.gateSpread = bounds.campSpread;
+        in.campOnly = bounds.campOnly;
 
+        // Give a freshly published camp the normal recovery window even if
+        // the route was already waiting before the stage committed.
+        if (bounds.campOnly && getMSTimeDiff(bounds.formingSince, now) < in.noProgressTimeoutMs)
+            return false;
         if (!DcStrandedDecision::Decide(in, members).recover)
             return false;
-        if (naxx40 && !GetNaxx40Landing(*driver.anchor, *driver.anchor, driver.anchor->GetPositionX(),
-                                       driver.anchor->GetPositionY()))
+
+        Position const origin = bounds.campOnly ? *bounds.camp : driver.anchor->GetPosition();
+        if (naxx40 && !GetNaxx40Landing(*driver.anchor, *driver.anchor, origin, origin.GetPositionX(),
+                                       origin.GetPositionY()))
         {
             LOG_DEBUG("playerbots.dungeonclear", "[DC:{}] stranded-recovery: no dry landing at the Naxx40 anchor",
                       driver.anchor->GetName());
@@ -303,16 +343,19 @@ namespace DcStrandedRecovery
         if (!group)
             return;
 
-        RescueBounds const bounds = ResolveRescueBounds(bot);
-        float const lx = leader->GetPositionX();
-        float const ly = leader->GetPositionY();
-        float const lz = leader->GetPositionZ();
+        RescueBounds const bounds = ResolveRescueBounds(bot, leader);
+        Position const origin = bounds.campOnly ? *bounds.camp : leader->GetPosition();
+        float const lx = origin.GetPositionX();
+        float const ly = origin.GetPositionY();
+        float const lz = origin.GetPositionZ();
         bool const naxx40 = IsNaxx40Map(leader->FindMap());
         DcRunState& run = DcRun::Of(leaderAI);
         if (naxx40 && (run.paused || LivingPoisonControlsRun(*leader, run) ||
                        GluthTransitControlsRun(driver.runOwner, leaderAI) ||
                        DcNaxx40Horsemen::OwnsMovement(*leaderAI) ||
-                       !GetNaxx40Landing(*leader, *leader, lx, ly)))
+                       !GetNaxx40Landing(*leader, *leader, origin, lx, ly)))
+            return;
+        if (bounds.campOnly && (!run.enabled || !Enabled(bot) || DcCombatFlag::AnyPartyEngagement(leader)))
             return;
 
         uint32 moved = 0;
@@ -329,7 +372,8 @@ namespace DcStrandedRecovery
                 continue;                       // dead members are the rez recovery's job
             if (member->GetMapId() != leader->GetMapId())
                 continue;
-            if (!GET_PLAYERBOT_AI(member))       // bots only, never a human
+            PlayerbotAI* const memberAI = GET_PLAYERBOT_AI(member);
+            if (!memberAI)                      // bots only, never a human
                 continue;
             if (naxx40 && (!member->IsInMap(leader) || !leader->InSamePhase(member) ||
                            DcPlayerbotCompat::IsHumanControlled(member)))
@@ -338,15 +382,15 @@ namespace DcStrandedRecovery
             // vehicle where it stood — on Trial of the Champion that is a horse at
             // the arena wall and a lance-armed bot on foot in the middle of a
             // joust, which is a strand this recovery would be CAUSING.
-            if (member->GetVehicle())
+            if (member->GetVehicle() || (bounds.campOnly && member->IsBeingTeleported()))
                 continue;
             float const strandedDist = leader->GetDistance(member);
-            float const campDist = bounds.camp ? member->GetDistance(*bounds.camp) : -1.0f;
+            float const campDist = DistanceToCamp(*member, bounds.camp, bounds.campOnly);
             if (!DcStrandedDecision::IsStranded(strandedDist, campDist, bounds.maxSpread,
-                                                bounds.campSpread))
+                                                bounds.campSpread, bounds.campOnly))
                 continue;                       // in range — not stranded
 
-            // Fan the strays out a little around the tank so they don't stack on
+            // Fan the strays out a little around the destination so they don't stack on
             // one point, and drop any stale follow spline that would otherwise drag
             // them straight back toward wherever they were stuck.
             float const angle = leader->GetOrientation() + static_cast<float>(moved) * 0.7f;
@@ -355,19 +399,40 @@ namespace DcStrandedRecovery
             Position destination(lx + std::cos(angle) * off, ly + std::sin(angle) * off, lz);
             if (naxx40)
             {
-                std::optional<Position> landing = GetNaxx40Landing(*leader, *member, destination.GetPositionX(),
-                                                                  destination.GetPositionY());
+                std::optional<Position> landing = GetNaxx40Landing(*leader, *member, origin,
+                    destination.GetPositionX(), destination.GetPositionY());
                 if (!landing)
-                    landing = GetNaxx40Landing(*leader, *member, lx, ly);
+                    landing = GetNaxx40Landing(*leader, *member, origin, lx, ly);
                 if (!landing)
                     continue;
                 destination = *landing;
             }
 
+            if (bounds.campOnly)
+            {
+                constexpr uint32 options = TELE_TO_NOT_LEAVE_COMBAT | TELE_TO_NOT_LEAVE_TRANSPORT |
+                    TELE_TO_NOT_UNSUMMON_PET | TELE_TO_WITH_PET;
+                if (!member->TeleportTo(member->GetMapId(), destination.GetPositionX(), destination.GetPositionY(),
+                                        destination.GetPositionZ(), member->GetOrientation(), options))
+                    continue;
+
+                member->GetMotionMaster()->Clear();
+                DcMovement::ReleaseMoveLock(member);
+                memberAI->GetAiObjectContext()->GetValue<DcPullContext&>(DcKey::PullContext)
+                    ->Get().ResetCampRecallProgress();
+                ++moved;
+                LOG_INFO("playerbots.dungeonclear",
+                         "[DC:{}] stranded-recovery: no progress past the timeout with {} out of range "
+                         "({:.1f}yd from the camp / {:.1f}) -> teleported to the scripted camp at "
+                         "({:.1f},{:.1f},{:.1f})",
+                         leader->GetName(), member->GetName(), campDist, bounds.campSpread,
+                         destination.GetPositionX(), destination.GetPositionY(), destination.GetPositionZ());
+                continue;
+            }
+
             member->GetMotionMaster()->Clear();
             member->NearTeleportTo(destination.GetPositionX(), destination.GetPositionY(), destination.GetPositionZ(),
-                                   member->GetOrientation(),
-                                   /*casting*/ false, /*vehicle*/ false, /*withPet*/ true);
+                                   member->GetOrientation(), /*casting*/ false, /*vehicle*/ false, /*withPet*/ true);
             ++moved;
 
             LOG_INFO("playerbots.dungeonclear",
@@ -411,7 +476,13 @@ namespace DcStrandedRecovery
             float const maxDrag = DcSettings::GetFloat(bot, "PullMaxDrag");
             std::optional<Position> const trail =
                 DcPullPlanner::ComputeTrailCamp(leaderAI, setback, maxDrag);
-            pull.camp = trail ? *trail : leader->GetPosition();
+            Position const fallback = leader->GetPosition();
+            if (trail)
+                pull.camp = *trail;
+            else if (DcNoStopZone::IsMaexxnaBridgeCampForbidden(*leader, fallback))
+                pull.PublishCamp(Position(), getMSTime());
+            else
+                pull.camp = fallback;
             // A room-clear lane republishes its own camp every tick it is walked
             // (DcPullActions, "PublishCamp(pull.laneCamp"), so the re-anchor lasted
             // one tick and the party was recalled to the stranding camp again:
@@ -427,11 +498,8 @@ namespace DcStrandedRecovery
                      pull.camp.GetPositionZ());
         }
 
-        // Re-arm the clock: the strays are back at the tank but nothing else has
-        // changed, so without this the very next tick would read as stale again and
-        // re-fire. Give the run a fresh window for follow-tank + advance to resume
-        // real progress. Re-seed the closing-distance mark from the tank's current
-        // spot too, so a re-measure isn't fooled by the old best.
+        // Give the rescued followers a fresh progress window after the teleport.
+        // Clear the tank's best closing distance so the next sample starts fresh.
         DcRunProgress::Stamp(run.progress, getMSTime());
         run.progress.bestDist = -1.0f;
 

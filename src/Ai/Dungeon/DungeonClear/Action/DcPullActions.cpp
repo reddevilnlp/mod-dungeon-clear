@@ -59,6 +59,9 @@
 #include "Ai/Dungeon/DungeonClear/Util/DcPathWorker.h"
 #include "Ai/Dungeon/DungeonClear/Util/DcTankForm.h"
 #include "Ai/Dungeon/DungeonClear/Util/DcSocialQuarantine.h"
+#include "Ai/Dungeon/DungeonClear/Util/DcCombatFlag.h"
+#include "Ai/Dungeon/DungeonClear/Util/DcNaxx40SpiderQuarter.h"
+#include "Ai/Dungeon/DungeonClear/Util/DcNoStopZone.h"
 #include "Ai/Dungeon/DungeonClear/Util/DcTargeting.h"
 #include "Ai/Dungeon/DungeonClear/Util/DcTickMemo.h"
 #include "Ai/Dungeon/DungeonClear/Util/DungeonClearTuning.h"
@@ -195,25 +198,51 @@ namespace
         return stage && stage->bodyPull;
     }
 
-    ScriptedPullStage const* FloorBoundStage(Player& tank, DcPullContext const& pull)
+    bool IsScriptedPackAttacker(ScriptedPullStage const& stage, Unit const* attacker)
     {
-        ScriptedPullStage const* const stage = ScriptedPullRegistry::Find(tank.GetMapId(), pull.scriptedStage);
-        return stage && stage->keepOnPackFloor ? stage : nullptr;
+        if (!attacker || !attacker->IsAlive() || !ScriptedPullRegistry::IsPackEntry(stage, attacker->GetEntry()))
+            return false;
+        if (!DcNaxx40SpiderQuarter::IsStage(&stage))
+            return true;
+        Creature const* const creature = attacker->ToCreature();
+        return creature && std::ranges::find(stage.spawnIds, creature->GetSpawnId()) != stage.spawnIds.end();
     }
 
-    bool DriveOnPackFloor(PlayerbotAI* ai, ScriptedPullStage const& stage, Position const& target)
+    ScriptedPullStage const* CheckedPathStage(Player& tank, DcPullContext const& pull)
+    {
+        ScriptedPullStage const* const stage = ScriptedPullRegistry::Find(tank.GetMapId(), pull.scriptedStage);
+        return stage && (stage->keepOnPackFloor || DcNaxx40SpiderQuarter::IsStage(stage)) ? stage : nullptr;
+    }
+
+    bool DriveOnScriptedPath(PlayerbotAI* ai, ScriptedPullStage const& stage, Position const& target)
     {
         Player* const tank = ai->GetBot();
         G3D::Vector3 const end(target.GetPositionX(), target.GetPositionY(), target.GetPositionZ());
         if (DcMovement::OwnsRunningEscort(tank) && (tank->movespline->FinalDestination() - end).squaredLength() < 1.0f)
             return true;
-        Movement::PointsArray path = DcNaxx40SlimeCrossing::BuildDryCampPath(tank, target);
-        if (path.empty() || std::any_of(path.begin(), path.end(), [&stage](G3D::Vector3 const& point)
+        Movement::PointsArray path = DcNaxx40SpiderQuarter::IsStage(&stage)
+            ? DcNaxx40SpiderQuarter::BuildPullPath(tank, target)
+            : DcNaxx40SlimeCrossing::BuildDryCampPath(tank, target);
+        if (path.empty() || (stage.keepOnPackFloor &&
+            std::any_of(path.begin(), path.end(), [&stage](G3D::Vector3 const& point)
             {
                 return std::abs(point.z - stage.packZ) > stage.packZBand;
-            }))
+            })))
             return false;
         return DcMovement::SplinePath(ai, path, MovementPriority::MOVEMENT_COMBAT, FORCED_MOVEMENT_RUN);
+    }
+
+    void StallSpiderTag(PlayerbotAI* ai, AiObjectContext* context, ScriptedPullStage const& stage, char const* blocker)
+    {
+        std::string const reason = std::string(stage.name) + ": " + blocker;
+        if (context->GetValue<std::string&>(DcKey::LastSaidReason)->Get() != reason)
+        {
+            Player* const tank = ai->GetBot();
+            DC_PULL_INFO("[DC:{}] scripted-pull tag wait: {} | tank ({:.1f},{:.1f},{:.1f}) | stand ({:.1f},{:.1f},{:.1f})",
+                         tank->GetName(), reason, tank->GetPositionX(), tank->GetPositionY(), tank->GetPositionZ(),
+                         stage.standX, stage.standY, stage.standZ);
+        }
+        StallDungeonClear(ai, reason);
     }
 
     uint32 DcPullLegTimeoutMs(DcPullContext const& pull, float legDist)
@@ -479,11 +508,6 @@ namespace
     static_assert(DC_PULLBACK_SUMMON_OFFSET < DC_PULLBACK_RELEASE_RANGE,
                   "a summoned boss must land inside the release range, else the "
                   "party is held at camp with the boss already on top of them");
-    // "Party is set" tolerance for the Forming gate. A touch wider than the hold
-    // radius so a follower parked at the boundary reliably counts as set instead
-    // of flickering in/out and never letting the tank tag.
-    constexpr float DC_PULL_SET_RADIUS = 8.0f;
-
     // Resolve the advanced-pull camp params (setback / camp-clear radius / drag cap)
     // from the run settings, widening the clearance and drag cap to the boss's skirt
     // when a room-aggro pre-clear with a skirt override is active (Sepethrea). Without
@@ -802,7 +826,69 @@ bool DungeonClearPullAction::Execute(Event /*event*/)
             if (ScriptedPullStage const* stage =
                     DcTickMemoAccess::ScriptedStage(bot, context))
             {
-                pull.PublishCamp(Position(stage->campX, stage->campY, stage->campZ), now);
+                Position camp(stage->campX, stage->campY, stage->campZ);
+                if (DcNaxx40SpiderQuarter::IsStage(stage))
+                {
+                    bool const retrying = DcNaxx40SpiderQuarter::HadBlockedCamp(*bot, *stage, pull);
+                    DcNaxx40SpiderQuarter::CampPathCheck check;
+                    if (!ScriptedPullRegistry::IsStageTarget(*stage, trash))
+                        check.blocker = "pull target belongs to a different formation";
+                    else if (DcCombatFlag::AnyPartyEngagement(bot))
+                        check.blocker = "the raid is already fighting";
+                    else
+                        check = DcNaxx40SpiderQuarter::CheckCampPath(bot, *stage, camp, retrying);
+
+                    if (check.noCompletePath && stage->alternateCamp && retrying)
+                    {
+                        auto const& [x, y, z] = *stage->alternateCamp;
+                        Position const alternate(x, y, z);
+                        auto alternateCheck = DcNaxx40SpiderQuarter::CheckCampPath(bot, *stage, alternate);
+                        if (!alternateCheck.noCompletePath)
+                        {
+                            camp = alternate;
+                            check = std::move(alternateCheck);
+                            if (check.blocker.empty())
+                                DC_PULL_INFO("[DC:{}] scripted-pull [{}]: using surveyed alternate camp",
+                                             bot->GetName(), stage->name);
+                        }
+                    }
+
+                    if (check.noCompletePath)
+                    {
+                        if (pull.HasCamp())
+                            pull.PublishCamp(Position(), now);
+                        pull.ClearDynamicVerdict();
+                        DcNaxx40SpiderQuarter::DeferCamp(*bot, *stage, pull);
+                        DcTickMemoAccess::InvalidateScriptedStage(context);
+                        context->GetValue<ObjectGuid>(DcKey::PullTarget)->Reset();
+                        ClearStall(context);
+                        DC_PULL_INFO("[DC:{}] scripted-pull camp deferred: {}: {} | "
+                                     "tank ({:.1f},{:.1f},{:.1f}) | camp ({:.1f},{:.1f},{:.1f}) -> advance",
+                                     bot->GetName(), stage->name, check.blocker,
+                                     bot->GetPositionX(), bot->GetPositionY(), bot->GetPositionZ(),
+                                     camp.GetPositionX(), camp.GetPositionY(), camp.GetPositionZ());
+                        return false;
+                    }
+
+                    if (!check.blocker.empty())
+                    {
+                        DcMovement::StopBot(bot, DcMovement::Stop::Hold);
+                        if (pull.HasCamp())
+                            pull.PublishCamp(Position(), now);
+                        std::string const reason = std::string(stage->name) + ": " + check.blocker;
+                        if (context->GetValue<std::string&>(DcKey::LastSaidReason)->Get() != reason)
+                            DC_PULL_INFO("[DC:{}] scripted-pull camp wait: {} | tank ({:.1f},{:.1f},{:.1f}) | "
+                                         "camp ({:.1f},{:.1f},{:.1f})",
+                                         bot->GetName(), reason, bot->GetPositionX(), bot->GetPositionY(),
+                                         bot->GetPositionZ(), camp.GetPositionX(), camp.GetPositionY(),
+                                         camp.GetPositionZ());
+                        StallDungeonClear(botAI, reason);
+                        return true;
+                    }
+                    DcNaxx40SpiderQuarter::ClearCampDeferral(*stage, pull);
+                    ClearStall(context);
+                }
+                pull.PublishCamp(camp, now);
                 pull.scriptedStage = static_cast<int32>(stage->order);
                 pull.losPull = false;   // the stand spot, not a camp LOS break
                 pull.pullTarget = trash->GetGUID();
@@ -831,7 +917,7 @@ bool DungeonClearPullAction::Execute(Event /*event*/)
                              "for the party to set at camp",
                              bot->GetName(), stage->name ? stage->name : "?",
                              trash->GetGUID().ToString(), bot->GetExactDist(trash),
-                             stage->campX, stage->campY, stage->campZ,
+                             camp.GetPositionX(), camp.GetPositionY(), camp.GetPositionZ(),
                              stage->standX, stage->standY, stage->standZ,
                              stage->bodyPull
                                  ? std::string("none — this row is authored as a BODY "
@@ -1155,11 +1241,10 @@ bool DungeonClearPullAction::Execute(Event /*event*/)
             else
                 camped = DcPullPlanner::ComputeSafeCamp(botAI, trash, setback, safeRadius,
                                                         maxDrag, clearance, drag);
-            pull.PublishCamp(camped.has_value()
-                                 ? *camped
-                                 : Position(bot->GetPositionX(), bot->GetPositionY(),
-                                            bot->GetPositionZ()),
-                             now);
+            Position const proposedCamp = camped.value_or(bot->GetPosition());
+            if (DcNoStopZone::IsMaexxnaBridgeCampForbidden(*bot, proposedCamp))
+                return false;
+            pull.PublishCamp(proposedCamp, now);
 
             // Record whether this is a line-of-sight pull (ranged pack, camp placed
             // to break LOS) so the addon status line can announce it. Mirrors the
@@ -1253,10 +1338,49 @@ bool DungeonClearPullAction::Execute(Event /*event*/)
                 return true;
             }
 
+            bool const spiderStage = DcNaxx40SpiderQuarter::IsStage(ScriptedPullRegistry::Find(bot->GetMapId(), pull.scriptedStage));
+            Player const* waitingMember = nullptr;
             bool const partySet = DcNaxx40Patchwerk::IsPatrolPull(pull)
                 ? DcNaxx40Patchwerk::PatrolFormationReady(bot)
-                : DcPullPlanner::IsPartySetAtCamp(bot, camp, DC_PULL_SET_RADIUS);
+                : DcPullPlanner::IsPartySetAtCamp(bot, camp, DC_PULL_SET_RADIUS, spiderStage ? &waitingMember : nullptr);
             bool const formingTimedOut = (now - since) > setTimeoutMs;
+            if (spiderStage)
+            {
+                bool const fighting = DcCombatFlag::AnyPartyEngagement(bot);
+                if (pull.partyReleased && !fighting)
+                {
+                    // A camp safety release lets the group defend itself. Re-form on the
+                    // same camp after the accidental fight without dropping this stage.
+                    pull.partyReleased = false;
+                    DcSetPullPhase(context, DcPullPhase::Forming);
+                    return true;
+                }
+                Player const* waitingOwner = nullptr;
+                if (fighting || !partySet || !DcNaxx40SpiderQuarter::CampPetsReady(bot, camp, DC_PULL_SET_RADIUS, &waitingOwner))
+                {
+                    if (formingTimedOut)
+                    {
+                        std::string reason = "Spider Quarter: ";
+                        if (fighting)
+                            reason += "the raid is already fighting";
+                        else if (waitingMember)
+                        {
+                            reason += waitingMember->GetName();
+                            reason += waitingMember->GetExactDist(&camp) > DC_PULL_SET_RADIUS
+                                ? " is outside the camp" : " is not holding fire";
+                        }
+                        else if (waitingOwner)
+                            reason += "waiting for " + waitingOwner->GetName() + "'s pet";
+                        else
+                            reason += "waiting for the raid at camp";
+                        if (context->GetValue<std::string&>(DcKey::LastSaidReason)->Get() != reason)
+                            DC_PULL_INFO("[DC:{}] scripted-pull forming wait: {} | camp ({:.1f},{:.1f},{:.1f})",
+                                         bot->GetName(), reason, camp.GetPositionX(), camp.GetPositionY(), camp.GetPositionZ());
+                        StallDungeonClear(botAI, reason);
+                    }
+                    return true;
+                }
+            }
             if (!partySet && !formingTimedOut)
             {
                 DC_PULL_TRACE("[DC:{}] pull forming: waiting for party to set at camp "
@@ -1288,7 +1412,7 @@ bool DungeonClearPullAction::Execute(Event /*event*/)
                 DcMovement::ClearMovementWait(bot);
             }
 
-            if (pull.embalmingSurvivorStand)
+            if (pull.embalmingSurvivorStand || spiderStage)
                 ClearStall(context);
             DcSetPullPhase(context, DcPullPhase::Advancing);
             DC_PULL_DEBUG("[DC:{}] pull forming complete ({}) -> advancing (tag)",
@@ -1302,36 +1426,77 @@ bool DungeonClearPullAction::Execute(Event /*event*/)
             if (DcNaxx40Patchwerk::IsPatrolPull(pull))
                 return DcNaxx40Patchwerk::DrivePatrolTag(botAI, context);
 
-            ScriptedPullStage const* const floorStage = FloorBoundStage(*bot, pull);
+            ScriptedPullStage const* const checkedStage = CheckedPathStage(*bot, pull);
+            bool const spiderStage = DcNaxx40SpiderQuarter::IsStage(checkedStage);
 
-            // Tag the pack. The moment combat starts the non-combat trigger stops
-            // firing and DungeonClearPullManeuverAction drags it back to camp.
-            Unit* trash = next.has_value() ? DcTargeting::GetPullTarget(botAI) : nullptr;
-            if (!trash)
+            // Retain the target of a shot in flight, even if the patrol's closest member changes.
+            Unit* trash = nullptr;
+            if (next)
             {
-                // Pack died / despawned before we tagged it — nothing to pull.
-                // Kill the tag leg too: its MoveTo otherwise carries the tank on
-                // toward a pack nobody is pulling any more.
+                if (spiderStage)
+                    trash = pull.tagTarget.IsEmpty()
+                        ? DcNaxx40SpiderQuarter::NearestPackMember(bot, *checkedStage, pull.abortTarget)
+                        : ObjectAccessor::GetUnit(*bot, pull.tagTarget);
+                else
+                    trash = DcTargeting::GetPullTarget(botAI);
+            }
+            if (!trash || (spiderStage && !trash->IsAlive()))
+            {
+                // Stop the walk-in before the route can select the next pack.
                 DcMovement::StopBot(bot, DcMovement::Stop::HardPin);
                 DcMovement::ClearMovementWait(bot);
+                if (spiderStage)
+                {
+                    AbandonScriptedStage(pull);
+                    context->GetValue<ObjectGuid>(DcKey::PullTarget)->Reset();
+                    ClearStall(context);
+                }
                 DcSetPullPhase(context, DcPullPhase::Idle);
-                DC_PULL_DEBUG("[DC:{}] pull advancing: target gone -> idle",
-                              bot->GetName());
+                DC_PULL_DEBUG("[DC:{}] pull advancing: target gone -> idle", bot->GetName());
                 return false;
+            }
+
+            if (spiderStage && pull.tagTarget.IsEmpty())
+            {
+                if (DcCombatFlag::AnyPartyEngagement(bot))
+                {
+                    DcMovement::StopBot(bot, DcMovement::Stop::HardPin);
+                    DcMovement::ClearMovementWait(bot);
+                    pull.phaseSince = now;
+                    StallSpiderTag(botAI, context, *checkedStage, "another pack is already fighting the raid");
+                    return true;
+                }
+
+                bool const standClear =
+                    DcNaxx40SpiderQuarter::PatrolClearOfStand(bot, *checkedStage, pull.scriptedAtStandMs == 0);
+                if (!standClear || !DcNaxx40SpiderQuarter::PatrolClearForTag(bot, *checkedStage))
+                {
+                    // Give the actual tag leg its full budget once the patrol clears.
+                    pull.phaseSince = now;
+                    pull.scriptedAtStandMs = 0;
+                    if (bot->GetExactDist(&camp) > DC_PULL_CAMP_ARRIVE)
+                        DriveOnScriptedPath(botAI, *checkedStage, camp);
+                    else
+                        DcMovement::StopBot(bot, DcMovement::Stop::Hold);
+                    StallSpiderTag(botAI, context, *checkedStage, standClear
+                        ? "another formation can assist the pack" : "patrol too close to the stand");
+                    return true;
+                }
             }
 
             // Tag-leg budget: the camp-to-target span, so a pull-back's long haul
             // out to the boss gets a proportionate watchdog (see DcPullLegTimeoutMs).
             if ((now - since) > DcPullLegTimeoutMs(pull, camp.GetExactDist(trash)))
             {
-                if (floorStage)
+                if (checkedStage)
                 {
                     DcMovement::StopBot(bot, DcMovement::Stop::HardPin);
                     DcMovement::ClearMovementWait(bot);
                     AbandonScriptedStage(pull);
                     DcSetPullPhase(context, DcPullPhase::Idle);
                     context->GetValue<ObjectGuid>(DcKey::PullTarget)->Reset();
-                    StallDungeonClear(botAI, std::string(floorStage->name) + ": retrying at the same floor.");
+                    StallDungeonClear(botAI, std::string(checkedStage->name) +
+                        (spiderStage ? ": tag timed out, retrying from the scripted camp." : ": retrying at the same floor."));
                     return true;
                 }
                 if (pull.naxx40RangedStand && next && DcNaxx40Patchwerk::NoteSweepTagTimeout(bot, context, next->entry))
@@ -1440,14 +1605,20 @@ bool DungeonClearPullAction::Execute(Event /*event*/)
                 {
                     Position const stand(stage->standX, stage->standY, stage->standZ);
                     float const toStand = bot->GetExactDist(&stand);
-                    if (toStand > (floorStage ? 1.0f : DC_PULL_CAMP_ARRIVE))
+                    if (toStand > (checkedStage ? 1.0f : DC_PULL_CAMP_ARRIVE))
                     {
                         DC_PULL_TRACE("[DC:{}] scripted-pull: walking to the stand spot "
                                       "({:.1f}yd) before tagging", bot->GetName(), toStand);
-                        if (floorStage)
+                        if (checkedStage)
                         {
-                            if (!DriveOnPackFloor(botAI, *floorStage, stand))
-                                StallDungeonClear(botAI, std::string(floorStage->name) + ": waiting for a dry path to the stand.");
+                            if (!DriveOnScriptedPath(botAI, *checkedStage, stand))
+                            {
+                                if (spiderStage)
+                                    StallSpiderTag(botAI, context, *checkedStage, "unable to move to the stand");
+                                else
+                                    StallDungeonClear(botAI,
+                                        std::string(checkedStage->name) + ": waiting for a dry path to the stand.");
+                            }
                             return true;
                         }
                         bool const walked =
@@ -1471,7 +1642,7 @@ bool DungeonClearPullAction::Execute(Event /*event*/)
                         // Arrived. Latch it — the leg is done, and on a body-pull row
                         // the tank is about to leave the spot on purpose.
                         pull.scriptedAtStandMs = now;
-                        if (floorStage)
+                        if (checkedStage)
                             ClearStall(context);
                         DC_PULL_DEBUG("[DC:{}] scripted-pull: on the stand spot "
                                       "({:.1f}yd) -> taking the tag from here",
@@ -1483,6 +1654,16 @@ bool DungeonClearPullAction::Execute(Event /*event*/)
                         DcMovement::ClearMovementWait(bot);
                     }
                 }
+            }
+
+            if (spiderStage && pull.tagTarget.IsEmpty())
+            {
+                if (DcNaxx40SpiderQuarter::BuildPullPath(bot, camp).empty())
+                {
+                    StallSpiderTag(botAI, context, *checkedStage, "no complete return path to camp");
+                    return true;
+                }
+                ClearStall(context);
             }
 
             // The pull-back maneuver is exempt: its whole point is a long deliberate
@@ -1713,6 +1894,8 @@ bool DungeonClearPullAction::Execute(Event /*event*/)
                         if (botAI->CastSpell(pick->spellId, trash))
                         {
                             pull.tagTarget = trash->GetGUID();
+                            if (spiderStage)
+                                pull.pullTarget = pull.tagTarget;
                             // Same as the "already tagged" branch above: the tag has
                             // landed, so the walk-in's MOVEMENT_COMBAT wait must not
                             // survive to refuse the drag-back.
@@ -1749,20 +1932,20 @@ bool DungeonClearPullAction::Execute(Event /*event*/)
                 return true;
             }
 
-            if (floorStage)
+            if (checkedStage)
             {
-                if (floorStage->bossEntry == DcNaxx40LivingPoison::GrobbulusEntry)
+                if (spiderStage || checkedStage->bossEntry == DcNaxx40LivingPoison::GrobbulusEntry)
                 {
                     // Only the ranged leg to this stand was measured outside the boss patrol.
                     DcMovement::StopBot(bot, DcMovement::Stop::Hold);
-                    StallDungeonClear(botAI, std::string(floorStage->name) + ": waiting for a ranged tag from the stand.");
+                    StallDungeonClear(botAI, std::string(checkedStage->name) + ": waiting for a ranged tag from the stand.");
                     return true;
                 }
                 // A missing opener or expired cast still gets a normal body tag,
                 // but toward the live target along the verified floor, without
                 // letting the generic aggro-edge projection aim under it.
-                if (!DriveOnPackFloor(botAI, *floorStage, trash->GetPosition()))
-                    StallDungeonClear(botAI, std::string(floorStage->name) + ": waiting for a dry walk-in to the pack.");
+                if (!DriveOnScriptedPath(botAI, *checkedStage, trash->GetPosition()))
+                    StallDungeonClear(botAI, std::string(checkedStage->name) + ": waiting for a dry walk-in to the pack.");
                 return true;
             }
 
@@ -2342,8 +2525,7 @@ namespace
         {
             for (Unit* a : p->getAttackers())
             {
-                if (!a || !a->IsAlive() ||
-                    !ScriptedPullRegistry::IsPackEntry(stage, a->GetEntry()))
+                if (!IsScriptedPackAttacker(stage, a))
                     continue;
                 any = true;
                 if (seen.insert(a->GetGUID()).second)
@@ -2392,8 +2574,7 @@ namespace
         {
             for (Unit* a : p->getAttackers())
             {
-                if (!a || !a->IsAlive() ||
-                    !ScriptedPullRegistry::IsPackEntry(stage, a->GetEntry()))
+                if (!IsScriptedPackAttacker(stage, a))
                     continue;
                 if (!seen.insert(a->GetGUID()).second)
                     continue;
@@ -2564,7 +2745,8 @@ bool DungeonClearPullManeuverAction::Execute(Event /*event*/)
                     bot, *stage, camp, DC_SCRIPTED_PULL_LEASH);
                 Position const spot(stage->standX, stage->standY, stage->standZ);
                 float const toSpot = camp.GetExactDist(&spot);
-                if (held && toSpot > DC_PULL_CAMP_ARRIVE)
+                if (held && toSpot > DC_PULL_CAMP_ARRIVE &&
+                    (!DcNaxx40SpiderQuarter::IsStage(stage) || DcNaxx40SpiderQuarter::PatrolClearOfStand(bot, *stage, true)))
                 {
                     float const t = std::min(DC_SCRIPTED_PULL_CAMP_STEP, toSpot) / toSpot;
                     float const nx = camp.GetPositionX() +
@@ -2744,6 +2926,16 @@ bool DungeonClearPullManeuverAction::Execute(Event /*event*/)
     if (phase == DcPullPhase::Advancing || phase == DcPullPhase::Forming ||
         phase == DcPullPhase::Idle)
     {
+        ScriptedPullStage const* const stage = ScriptedPullRegistry::Find(bot->GetMapId(), pull.scriptedStage);
+        if (DcNaxx40SpiderQuarter::IsStage(stage) && pull.tagTarget.IsEmpty() &&
+            !ScriptedPackStillFighting(bot, *stage))
+        {
+            DC_PULL_INFO("[DC:{}] scripted-pull: unexpected combat before stage [{}] tagged; releasing the raid",
+                         bot->GetName(), stage->name);
+            EndCampFight(bot, context, pull);
+            return false;
+        }
+
         // Unplanned aggro while scouting (Idle): stamp a FRESH safe camp just
         // behind the tank (away from the aggressor) and drag the pack THERE. The
         // party then converges on the NEW camp via hold-at-camp — we deliberately
@@ -2791,9 +2983,15 @@ bool DungeonClearPullManeuverAction::Execute(Event /*event*/)
         // If the camp was never stamped and none could be computed, fall back to
         // fighting in place rather than dragging the pack to the map origin.
         if (!pull.HasCamp())
-            pull.PublishCamp(Position(bot->GetPositionX(), bot->GetPositionY(),
-                                      bot->GetPositionZ()),
-                             now);
+        {
+            Position const feet = bot->GetPosition();
+            if (DcNoStopZone::IsMaexxnaBridgeCampForbidden(*bot, feet))
+            {
+                EndCampFight(bot, context, pull);
+                return false;
+            }
+            pull.PublishCamp(feet, now);
+        }
 
         // KILL THE INBOUND LEG BEFORE TURNING AROUND. This is the difference
         // between "aggro -> turn -> run" and the sluggish "aggro -> keep walking
@@ -3258,9 +3456,13 @@ bool DungeonClearPullManeuverAction::Execute(Event /*event*/)
 
             // The camp IS wherever the fight lands. Re-stamp it (fresh publish) so
             // the party converges on the plant point and the addon panel relocates.
-            pull.PublishCamp(Position(bot->GetPositionX(), bot->GetPositionY(),
-                                      bot->GetPositionZ()),
-                             now);
+            Position const feet = bot->GetPosition();
+            if (DcNoStopZone::IsMaexxnaBridgeCampForbidden(*bot, feet))
+            {
+                EndCampFight(bot, context, pull);
+                return false;
+            }
+            pull.PublishCamp(feet, now);
 
             // Turn on the nearest attacker so the tank commits the moment it stops,
             // rather than drifting before stock combat re-acquires (mirrors the
@@ -3336,11 +3538,11 @@ bool DungeonClearPullManeuverAction::Execute(Event /*event*/)
     // combat chase/attack can't grab the tank and fight at the pack instead.
     DC_PULL_TRACE("[DC:{}] pull returning: {:.1f}yd to camp ({} ms into leg)",
                   bot->GetName(), dist, legElapsed);
-    ScriptedPullStage const* const floorStage = FloorBoundStage(*bot, pull);
+    ScriptedPullStage const* const checkedStage = CheckedPathStage(*bot, pull);
     bool const moved = patchwerk ? DcNaxx40Patchwerk::DrivePatrolReturn(botAI)
         : embalming && pull.embalmingSurvivorStand ? DcNaxx40Embalming::DriveSurvivorReturn(botAI, camp)
         : pull.naxx40RangedStand && !embalming ? DcNaxx40Patchwerk::DriveSweepReturn(botAI, returnPoint)
-        : floorStage ? DriveOnPackFloor(botAI, *floorStage, returnPoint)
+        : checkedStage ? DriveOnScriptedPath(botAI, *checkedStage, returnPoint)
         : DcMoveTo(bot->GetMapId(), returnPoint.GetPositionX(), returnPoint.GetPositionY(), returnPoint.GetPositionZ(),
                    /*idle*/ false, /*react*/ false, /*normal_only*/ false,
                    /*exact_waypoint*/ false, MovementPriority::MOVEMENT_COMBAT);

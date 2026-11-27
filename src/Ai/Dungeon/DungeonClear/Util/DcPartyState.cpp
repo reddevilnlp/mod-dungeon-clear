@@ -6,6 +6,7 @@
 #include "DcPartyState.h"
 
 #include "DcTickMemo.h"
+#include "DcNaxx40AnubApproach.h"
 #include "DcNaxx40Patchwerk.h"
 #include "DungeonClearMath.h"
 #include "DungeonClearTuning.h"
@@ -216,6 +217,12 @@ DcPartyState::SpreadGate DcPartyState::GetSpreadGate(Player* bot, AiObjectContex
                 return gate;
             }
         }
+    }
+
+    if (Position const* camp = DcNaxx40AnubApproach::ActiveCampHold(bot, context))
+    {
+        gate.anchor = camp;
+        return gate;
     }
 
     DcPullContext const& pull =

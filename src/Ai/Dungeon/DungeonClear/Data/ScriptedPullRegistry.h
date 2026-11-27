@@ -6,7 +6,9 @@
 #ifndef _PLAYERBOT_SCRIPTEDPULLREGISTRY_H
 #define _PLAYERBOT_SCRIPTEDPULLREGISTRY_H
 
+#include <array>
 #include <cstdint>
+#include <optional>
 #include <vector>
 
 #include "Define.h"
@@ -253,6 +255,9 @@ struct ScriptedPullStage
     // complete dry paths inside the pack's floor band.
     bool keepOnPackFloor{false};
 
+    // Some routes isolate packs by placement and timing while preserving native aggro.
+    bool quarantineOtherPacks{true};
+
     // WHICH member of the pack to tag: the one FURTHEST FROM THIS ANCHOR.
     //
     // The default ranks candidates by distance from the STAND SPOT and takes the
@@ -292,6 +297,9 @@ struct ScriptedPullStage
     {
         return avoidX != 0.0f || avoidY != 0.0f || avoidZ != 0.0f;
     }
+
+    // Surveyed optional camp to validate on a retry after a route handoff.
+    std::optional<std::array<float, 3>> alternateCamp;
 };
 
 // Vertical tolerance, in yards, for the arm-range test (a bot on the room's floor
@@ -754,7 +762,7 @@ public:
     // UNCACHED and not cheap — it runs one entry-filtered volume scan per candidate
     // stage. Everything on the per-tick path goes through
     // DcTickMemoAccess::ScriptedStage instead, which memoises this within the tick.
-    static ScriptedPullStage const* DueStage(Player* bot, AiObjectContext* ctx);
+    static ScriptedPullStage const* DueStage(Player* bot, AiObjectContext* ctx, bool includeDeferredCamps = false);
     // Nearest live, reachable pack member of `s` — the pull target for the stage.
     static Unit* NearestPackMember(Player* bot, AiObjectContext* ctx,
                                    ScriptedPullStage const& s);

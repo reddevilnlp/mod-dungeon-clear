@@ -66,6 +66,7 @@
 #include "Ai/Dungeon/DungeonClear/Util/DcRezRecovery.h"
 #include "Ai/Dungeon/DungeonClear/Data/FightInPlaceRegistry.h"
 #include "Ai/Dungeon/DungeonClear/Data/ScriptedPullRegistry.h"
+#include "Ai/Dungeon/DungeonClear/Util/DcNaxx40SpiderQuarter.h"
 #include "Ai/Dungeon/DungeonClear/Util/DcTargeting.h"
 #include "Ai/Dungeon/DungeonClear/Util/DcRun.h"
 #include "Ai/Dungeon/DungeonClear/Util/DcTickMemo.h"
@@ -920,11 +921,6 @@ bool DungeonClearCampHoldActionBase::Execute(Event /*event*/)
     if (!hasCamp)
         return false;
 
-    bool const naxx40 = IsNaxx40Map(bot->FindMap());
-    if (naxx40 && !DcNaxx40SlimeCrossing::IsDryCampGround(
-            *bot, {bot->GetPositionX(), bot->GetPositionY(), bot->GetPositionZ()}))
-        return false; // Give the slime escape action the movement slot.
-
     // Healers hold at camp like everyone else but are pinned with the "stay"
     // strategy instead of "+passive" (ApplyFollowerPassive) so they can heal the
     // tank through the drag-back without RUNNING FORWARD to close heal range —
@@ -945,7 +941,8 @@ bool DungeonClearCampHoldActionBase::Execute(Event /*event*/)
     // the party out of it. An in-room follower is recalled regardless of how far
     // camp happens to be; the radius below only handles ordinary drift on safe
     // ground.
-    bool const scriptedCamp = DcLeaderSignal::IsLeaderScriptedPullActive(bot);
+    bool spiderStage = false;
+    bool const scriptedCamp = DcLeaderSignal::IsLeaderScriptedPullActive(bot, &spiderStage);
     bool const inNoGoRoom =
         scriptedCamp && FightInPlaceRegistry::IsNoPullZone(
                             bot->GetMapId(), bot->GetPositionX(), bot->GetPositionY());
@@ -1104,7 +1101,8 @@ bool DungeonClearCampHoldActionBase::Execute(Event /*event*/)
     // exactly right: the TANK's camp was the authored point, the party's was not.
     // While passive, therefore, they take the ordinary tight slot pin like any other
     // held follower, which is what puts them on the coordinate.
-    Position const slot = DcPullPlanner::ComputeCampSlot(bot, camp);
+    Position const slot = DcPullPlanner::ComputeCampSlot(bot, camp,
+        spiderStage ? DcNaxx40SpiderQuarter::CampSlotLimit : 0.0f);
     float const toCamp = bot->GetExactDist(&slot);
     // The scripted camp FIGHT — anchored, not held. Everything below that treats
     // "inside the radius" as "settled and waiting" is wrong here, because the bot is
@@ -1166,9 +1164,7 @@ bool DungeonClearCampHoldActionBase::Execute(Event /*event*/)
             DC_PULL_TRACE("[DC:{}] hold-at-camp: in bounds mid-fight ({:.1f}yd) -> "
                           "yielding to the rotation", bot->GetName(), toCamp);
             DcPullContext& held = context->GetValue<DcPullContext&>(DcKey::PullContext)->Get();
-            held.campHoldBest = 0.0f;
-            held.campHoldClosest = 0.0f;
-            held.campHoldRunaway = false;
+            held.ResetCampRecallProgress();
             return false;
         }
         DcMovement::StopBot(bot, DcMovement::Stop::Soft);
@@ -1180,9 +1176,7 @@ bool DungeonClearCampHoldActionBase::Execute(Event /*event*/)
         // Settled: re-arm the losing-ground ratchet and the runaway latch for the
         // next recall.
         DcPullContext& settled = context->GetValue<DcPullContext&>(DcKey::PullContext)->Get();
-        settled.campHoldBest = 0.0f;
-        settled.campHoldClosest = 0.0f;
-        settled.campHoldRunaway = false;
+        settled.ResetCampRecallProgress();
         // During a holding phase (the tank is tagging) OWN the tick so nothing can
         // break the hold while the pull is live. While merely camped between pulls
         // (scout phase, passive==false) YIELD so the party can rest / loot at camp
@@ -1239,37 +1233,10 @@ bool DungeonClearCampHoldActionBase::Execute(Event /*event*/)
         return false;
     }
 
-    if (naxx40)
-    {
-        if (!IsMovingAllowed() || bot->IsFalling())
-            return false;
-
-        auto const movingTo = [&](Position const& position)
-        {
-            G3D::Vector3 const point(position.GetPositionX(), position.GetPositionY(), position.GetPositionZ());
-            return DcMovement::OwnsRunningEscort(bot) &&
-                   (bot->movespline->FinalDestination() - point).squaredLength() <= 1.0f;
-        };
-        if (movingTo(slot))
-            return true;
-
-        G3D::Vector3 const target(slot.GetPositionX(), slot.GetPositionY(), slot.GetPositionZ());
-        if (DcNaxx40SlimeCrossing::TryCrossTowards(botAI, target))
-            return true;
-
-        Movement::PointsArray path = DcNaxx40SlimeCrossing::BuildDryCampPath(bot, slot);
-        if (path.empty() && camp.GetExactDist(&slot) > DC_PULL_SLOT_RADIUS)
-        {
-            if (movingTo(camp))
-                return true;
-            if (bot->GetExactDist(&camp) <= DC_PULL_SLOT_RADIUS)
-                return passive;
-            path = DcNaxx40SlimeCrossing::BuildDryCampPath(bot, camp);
-        }
-        if (path.empty())
-            return passive;
-        return DcMovement::SplinePath(botAI, path, prio);
-    }
+    // The route can still reach a camp across one of the authored slime crossings.
+    if (DcNaxx40SlimeCrossing::IsNearBank(bot) && IsMovingAllowed() &&
+        DcNaxx40SlimeCrossing::TryCrossTowards(botAI, {slot.GetPositionX(), slot.GetPositionY(), slot.GetPositionZ()}))
+        return true;
 
     // A NEW CAMP IS A NEW RECALL. The advanced pull moves the camp as the tank
     // closes, and every campHold* distance was measured against the old one.
@@ -1278,9 +1245,7 @@ bool DungeonClearCampHoldActionBase::Execute(Event /*event*/)
     {
         ownPull.campHoldKeyX = camp.GetPositionX();
         ownPull.campHoldKeyY = camp.GetPositionY();
-        ownPull.campHoldBest = 0.0f;
-        ownPull.campHoldClosest = 0.0f;
-        ownPull.campHoldRunaway = false;
+        ownPull.ResetCampRecallProgress();
     }
 
     // A RECALL THAT RUNS AWAY IS STOOD DOWN, NOT RE-ISSUED. See CampRecallRanAway:

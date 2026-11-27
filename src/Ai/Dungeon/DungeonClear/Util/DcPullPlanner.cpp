@@ -13,6 +13,7 @@
 #include "DcBreadcrumb.h"
 #include "DcCombatFlag.h"
 #include "DcHazard.h"
+#include "DcNoStopZone.h"
 #include "DcZoneLine.h"
 #include "DungeonClearMath.h"
 #include "DungeonClearTuning.h"
@@ -67,12 +68,10 @@
 #include "Ai/Dungeon/DungeonClear/Util/DcPullDecisionIo.h"
 #include "Ai/Dungeon/DungeonClear/Util/DcLabTap.h"
 #include "Ai/Dungeon/DungeonClear/Util/DcNaxx40Patchwerk.h"
-#include "Ai/Dungeon/DungeonClear/Util/DcNaxx40SlimeCrossing.h"
 #include "Ai/Dungeon/DungeonClear/Util/DungeonPathFollower.h"
 #include "Ai/Dungeon/DungeonClear/Util/NavmeshSnap.h"
 #include "Ai/Dungeon/DungeonClear/Value/DungeonClearLiveBossValue.h"
 #include "Ai/Dungeon/DungeonClear/DcValueKeys.h"
-#include "Ai/Raid/Naxx40/Naxx40Encounter.h"
 
 namespace
 {
@@ -141,16 +140,19 @@ namespace
     // self-bot standing in it is teleported out of the instance mid-run. The
     // navmesh has no idea areatriggers exist, so IsNavReachable waves it
     // through; this is the only gate that sees it.
-    bool CampOverZoneLine(Player* bot, Position const& c)
+    // The Maexxna bridge likewise has walkable but unsuitable camp terrain.
+    bool CampOffLimitsForRoute(Player* bot, Position const& c)
     {
         if (!bot)
             return false;
+        if (DcNoStopZone::IsMaexxnaBridgeCampForbidden(*bot, c))
+            return true;
         return DcZoneLine::WouldCrossTheLine(bot, c.GetPositionX(), c.GetPositionY(),
                                              c.GetPositionZ());
     }
 }
 
-Position DcPullPlanner::ComputeCampSlot(Player* bot, Position const& camp)
+Position DcPullPlanner::ComputeCampSlot(Player* bot, Position const& camp, float fixedSlotLimit)
 {
     if (!bot)
         return camp;
@@ -184,24 +186,20 @@ Position DcPullPlanner::ComputeCampSlot(Player* bot, Position const& camp)
     DcFormation::RoleRings const rings =
         DcFormation::ComputeRoleRings(meleeCount, rangedCount, healerCount,
                                       /*baseRadius*/ 1.0f);
-    float const ringRadius = PlayerbotAI::IsHeal(bot)     ? rings.healer
+    float const roleRadius = PlayerbotAI::IsHeal(bot)     ? rings.healer
                              : PlayerbotAI::IsRanged(bot) ? rings.ranged
                                                           : rings.melee;
+    constexpr float BridgeBankSlotLimit = 6.0f;
+    bool const bridgeBank = DcNoStopZone::IsMaexxnaBridgeBank(*bot, camp);
+    float ringRadius = bridgeBank ? std::min(roleRadius, BridgeBankSlotLimit) : roleRadius;
+    if (fixedSlotLimit > 0.0f)
+        // Reserve one yard for SlotOffset's per-bot spread while preserving the role rings.
+        ringRadius *= std::min(1.0f, (fixedSlotLimit - 1.0f) / rings.healer);
     DcFormation::Offset const off = DcFormation::SlotOffset(seed, ringRadius);
 
     float const fx = camp.GetPositionX() + off.dx;
     float const fy = camp.GetPositionY() + off.dy;
     float const fz = camp.GetPositionZ();
-    bool const naxx40 = IsNaxx40Map(bot->FindMap());
-    auto const fallback = [&]()
-    {
-        if (!naxx40 || DcNaxx40SlimeCrossing::IsDryCampGround(
-                *bot, {camp.GetPositionX(), camp.GetPositionY(), fz}))
-            return camp;
-        // No dry slot or anchor. Hold here and let the slime strategy handle any escape.
-        return bot->GetPosition();
-    };
-
     // Route the fuzzed point through the navmesh. PathGenerator clamps an
     // off-mesh destination to the nearest walkable poly, so its actual endpoint
     // is guaranteed to be inside the zone geometry — the slot can never land in a
@@ -211,10 +209,17 @@ Position DcPullPlanner::ComputeCampSlot(Player* bot, Position const& camp)
     // cases fall back to the exact camp so we never displace a follower onto a
     // worse spot than the anchor itself.
     PathGenerator gen(bot);
-    gen.CalculatePath(fx, fy, fz, /*forceDest*/ false);
-    if ((gen.GetPathType() & (PATHFIND_NOPATH | PATHFIND_FARFROMPOLY)) ||
-        (naxx40 && gen.GetPathType() != PATHFIND_NORMAL))
-        return fallback();
+    if (fixedSlotLimit > 0.0f)
+    {
+        // A slot must not flip to the camp and back as its follower moves.
+        if (!gen.CalculatePath(camp.GetPositionX(), camp.GetPositionY(), fz, fx, fy, fz, false) ||
+            gen.GetPathType() != PATHFIND_NORMAL)
+            return camp;
+    }
+    else
+        gen.CalculatePath(fx, fy, fz, /*forceDest*/ false);
+    if (gen.GetPathType() & (PATHFIND_NOPATH | PATHFIND_FARFROMPOLY))
+        return camp;
 
     G3D::Vector3 const end = gen.GetActualEndPosition();
     Position const slot(end.x, end.y, end.z, camp.GetOrientation());
@@ -222,11 +227,10 @@ Position DcPullPlanner::ComputeCampSlot(Player* bot, Position const& camp)
     // against geometry). The tolerance follows the ring: the healer arc of a
     // 25-man legitimately parks ~10yd out, which the old fixed 3yd cap — sized
     // for the 1-2yd fan — would have rejected wholesale.
-    if (camp.GetExactDist(&slot) > ringRadius + 2.0f)
-        return fallback();
-
-    if (naxx40 && (std::abs(end.z - fz) > 3.0f || !DcNaxx40SlimeCrossing::IsDryCampGround(*bot, end)))
-        return fallback();
+    float const maxSlotDistance = fixedSlotLimit > 0.0f ? fixedSlotLimit
+        : bridgeBank ? BridgeBankSlotLimit : ringRadius + 2.0f;
+    if (camp.GetExactDist(&slot) > maxSlotDistance)
+        return camp;
 
     // The anchor was screened for hazards when it was chosen, but this fan-out
     // moves each follower 1-2yd off it — enough to push a bot camped just
@@ -234,7 +238,7 @@ Position DcPullPlanner::ComputeCampSlot(Player* bot, Position const& camp)
     // which is known clean; a couple of stacked followers is a much cheaper
     // problem than one standing in the aura.
     if (DcHazard::PointIsHot(bot, slot.GetPositionX(), slot.GetPositionY(), slot.GetPositionZ()))
-        return fallback();
+        return camp;
 
     return slot;
 }
@@ -653,10 +657,8 @@ void DcPullPlanner::UpdateDynamicPullMode(PlayerbotAI* botAI, AiObjectContext* c
             std::optional<Position> const seed = ComputeTrailCamp(botAI, setback, maxDrag);
             // Pull-machinery camp write: PublishCamp stamps ownership so Advance's
             // scout camp-trailing defers (see campPublishedMs / DC_CAMP_PUBLISH_FRESH_MS).
-            pull.PublishCamp(seed ? *seed
-                                  : Position(bot->GetPositionX(), bot->GetPositionY(),
-                                             bot->GetPositionZ()),
-                             getMSTime());
+            if (seed)
+                pull.PublishCamp(*seed, getMSTime());
         }
     };
 
@@ -1169,7 +1171,7 @@ std::optional<Position> DcPullPlanner::ComputeSafeCamp(PlayerbotAI* botAI, Unit*
             // dungeon's first pull the oldest crumbs are ALL over the line, so
             // short-circuiting here is the difference between rejecting them for
             // free and paying a path build apiece to reject them anyway.
-            if (campOffLimits(c) || CampOverZoneLine(bot, c) || !IsNavReachable(bot, c) ||
+            if (campOffLimits(c) || CampOffLimitsForRoute(bot, c) || !IsNavReachable(bot, c) ||
                 CampBlockedByDoor(bot, c) || CampInHazard(bot, live, c))
                 return true;
             float const clear = clearanceAt(c);
@@ -1250,7 +1252,7 @@ std::optional<Position> DcPullPlanner::ComputeSafeCamp(PlayerbotAI* botAI, Unit*
             Position cand(back->x, back->y, back->z);
             if (!campOffLimits(cand) && IsNavReachable(bot, cand) &&
                 !CampBlockedByDoor(bot, cand) && !CampInHazard(bot, live, cand) &&
-                !CampOverZoneLine(bot, cand))
+                !CampOffLimitsForRoute(bot, cand))
             {
                 clearanceOut = clearanceAt(cand);
                 dragOut = tankPos.GetExactDist(&cand);
@@ -1302,7 +1304,7 @@ std::optional<Position> DcPullPlanner::ComputeSafeCamp(PlayerbotAI* botAI, Unit*
             // through the geometry in between — and never across/into a shut door.
             if (campOffLimits(cand) || !IsNavReachable(bot, cand) ||
                 CampBlockedByDoor(bot, cand) || CampInHazard(bot, live, cand) ||
-                CampOverZoneLine(bot, cand))
+                CampOffLimitsForRoute(bot, cand))
                 continue;
             float const c = clearanceAt(cand);
             float const drag = tankPos.GetExactDist(&cand);
@@ -1409,7 +1411,7 @@ std::optional<DcPullPlanner::RoomClearLane> DcPullPlanner::ComputeRoomClearLane(
         if (box && !RoomAggroRegistry::InCampBox(*box, camp->GetPositionX(),
                                                  camp->GetPositionY()))
             continue;
-        if (CampOverZoneLine(bot, *camp) || !IsNavReachable(bot, *camp) ||
+        if (CampOffLimitsForRoute(bot, *camp) || !IsNavReachable(bot, *camp) ||
             CampBlockedByDoor(bot, *camp) || CampInHazard(bot, live, *camp))
             continue;
 
@@ -1484,7 +1486,7 @@ std::optional<Position> DcPullPlanner::ComputeTrailCamp(PlayerbotAI* botAI,
             // and trailing back onto them ports a self-bot out of the instance.
             // Zone line tested first — pure arithmetic, and it spares the
             // PathGenerator build on exactly the entrance crumbs it rejects.
-            if (!CampOverZoneLine(bot, s.crumb) && IsNavReachable(bot, s.crumb) &&
+            if (!CampOffLimitsForRoute(bot, s.crumb) && IsNavReachable(bot, s.crumb) &&
                 !CampBlockedByDoor(bot, s.crumb))
             {
                 result = s.crumb;
@@ -1502,8 +1504,10 @@ std::optional<Position> DcPullPlanner::ComputeTrailCamp(PlayerbotAI* botAI,
     // behind the tank until more trail accrues).
     for (auto it = preSetback.rbegin(); it != preSetback.rend(); ++it)
         if (IsNavReachable(bot, it->second) && !CampBlockedByDoor(bot, it->second) &&
-            !CampOverZoneLine(bot, it->second))
+            !CampOffLimitsForRoute(bot, it->second))
             return it->second;
+    if (DcNoStopZone::IsMaexxnaBridgeCampForbidden(*bot, tankPos))
+        return std::nullopt;
     return tankPos;
 }
 void DcPullPlanner::MaintainScoutCamp(PlayerbotAI* botAI, AiObjectContext* ctx)
@@ -1579,9 +1583,8 @@ void DcPullPlanner::MaintainScoutCamp(PlayerbotAI* botAI, AiObjectContext* ctx)
         // feet-seed has the party walk forward TO the tank instead of holding
         // behind it. ComputeTrailCamp falls back to the tank position itself
         // when no trail exists yet (mode just toggled on, tank hasn't moved).
-        std::optional<Position> const seed = ComputeTrailCamp(botAI, setback, maxDrag);
-        camp = seed ? *seed
-                    : Position(bot->GetPositionX(), bot->GetPositionY(), bot->GetPositionZ());
+        if (std::optional<Position> const seed = ComputeTrailCamp(botAI, setback, maxDrag))
+            camp = *seed;
     }
 
     // TRAIL the camp forward while merely scouting (phase Idle, out of combat).
@@ -1623,7 +1626,8 @@ void DcPullPlanner::MaintainScoutCamp(PlayerbotAI* botAI, AiObjectContext* ctx)
         }
     }
 }
-bool DcPullPlanner::IsPartySetAtCamp(Player* leader, Position const& camp, float setRadius)
+bool DcPullPlanner::IsPartySetAtCamp(Player* leader, Position const& camp, float setRadius,
+                                   Player const** waitingMember)
 {
     if (!leader)
         return false;
@@ -1649,7 +1653,11 @@ bool DcPullPlanner::IsPartySetAtCamp(Player* leader, Position const& camp, float
         // the same follower at the same camp — the module's repeat-offender
         // metric-mismatch class ("arrived? test + target must share a metric").
         if (member->GetExactDist(&camp) > setRadius)
+        {
+            if (waitingMember)
+                *waitingMember = member;
             return false;
+        }
         // Healers are deliberately never made fully passive (ApplyFollowerPassive
         // pins them with "stay" instead so they can heal the tank through the
         // drag-back), so requiring the passive strategy from them here would wait
@@ -1660,7 +1668,11 @@ bool DcPullPlanner::IsPartySetAtCamp(Player* leader, Position const& camp, float
         // AND holding fire) before the party is ready to tag.
         if (!PlayerbotAI::IsHeal(member) &&
             !memberAI->HasStrategy("passive", BOT_STATE_COMBAT))
+        {
+            if (waitingMember)
+                *waitingMember = member;
             return false;
+        }
     }
     return true;
 }

@@ -77,6 +77,8 @@
 #include "Ai/Dungeon/DungeonClear/Util/DcNaxx40Thaddius.h"
 #include "Ai/Dungeon/DungeonClear/Util/DcNaxx40LivingPoison.h"
 #include "Ai/Dungeon/DungeonClear/Util/DcNaxx40Patchwerk.h"
+#include "Ai/Dungeon/DungeonClear/Util/DcNaxx40AnubApproach.h"
+#include "Ai/Dungeon/DungeonClear/Util/DcNaxx40SpiderQuarter.h"
 #include "Ai/Dungeon/DungeonClear/Util/DcWaitAtBossDecision.h"
 #include "Ai/Dungeon/DungeonClear/Util/DungeonClearTuning.h"
 #include "Ai/Dungeon/DungeonClear/Util/DungeonClearUtil.h"
@@ -696,12 +698,17 @@ bool DungeonClearEngageTrashAction::Execute(Event event)
     if (!next || DcNaxx40GluthTransit::BlocksGeneric(bot, next->entry))
         return false;
 
+    if (!bot->IsInCombat() && DcNaxx40AnubApproach::OwnsApproach(bot, context, next->entry))
+        return false;
+
     if (DcNaxx40Patchwerk::SweepInProgress(bot, context, next->entry) ||
         DcNaxx40Patchwerk::ShouldStart(bot, context, next->entry) ||
         DcNaxx40Patchwerk::AtEmbalmingHandoff(bot, context, next->entry))
         return false;
     bool const patchwerk = DcNaxx40Patchwerk::SetApproachAnchor(bot, context, *next);
-    if (patchwerk && DcTickMemoAccess::ScriptedStage(bot, context))
+    if ((patchwerk && DcTickMemoAccess::ScriptedStage(bot, context)) ||
+        (DcNaxx40SpiderQuarter::UsesApproach(bot, next->entry) &&
+         DcNaxx40SpiderQuarter::IsStage(DcTickMemoAccess::ScriptedStage(bot, context))))
         return false;
 
     ObjectGuid const stickyGuid =
@@ -992,6 +999,8 @@ bool DungeonClearEngageBossAction::Execute(Event event)
 
     std::optional<DungeonBossInfo> next = AI_VALUE(std::optional<DungeonBossInfo>, DcKey::NextDungeonBoss);
     if (!next.has_value())
+        return false;
+    if (DcTickMemoAccess::SpiderStageBlocksBoss(bot, context, next->entry))
         return false;
     if (DcNaxx40GluthTransit::BlocksGeneric(bot, next->entry) ||
         DcNaxx40Thaddius::BlocksGeneric(bot, next->entry) ||
@@ -1354,7 +1363,8 @@ bool DungeonClearClearStalledAction::Execute(Event /*event*/)
     if (std::optional<DungeonBossInfo> const next = AI_VALUE(std::optional<DungeonBossInfo>, DcKey::NextDungeonBoss);
         next && (DcNaxx40GluthTransit::BlocksGeneric(bot, next->entry) ||
                  DcNaxx40Thaddius::BlocksGeneric(bot, next->entry) ||
-                 DcNaxx40Patchwerk::UsesPatrolCamp(bot, context, next->entry)))
+                 DcNaxx40Patchwerk::UsesPatrolCamp(bot, context, next->entry) ||
+                 DcNaxx40AnubApproach::OwnsApproach(bot, context, next->entry)))
         return false;
 
     // The stall's own pull is over (DungeonClearMath::StallPullIsDone): clear the

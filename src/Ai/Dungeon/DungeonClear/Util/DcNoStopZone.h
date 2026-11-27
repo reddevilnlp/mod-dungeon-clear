@@ -12,6 +12,7 @@
 
 class AiObjectContext;
 class Player;
+struct Position;
 
 // "May the party set up a pull where it is standing?"
 //
@@ -55,6 +56,10 @@ namespace DcNoStopZone
     // each tick, and at raid sizes an unmemoised answer is a fresh route walk every
     // time.
     bool IsInNoStopZone(Player* bot, AiObjectContext* context);
+
+    // The bridge margins are too narrow for an ordinary pull formation.
+    bool IsMaexxnaBridgeBank(Player const& bot, Position const& point);
+    bool IsMaexxnaBridgeCampForbidden(Player const& bot, Position const& point);
 
     // --- the pure half, so a test can pin a route's span against real coordinates
     //     without a world ---------------------------------------------------

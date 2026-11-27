@@ -123,6 +123,14 @@ struct DcPullContext
                                                  // suppressed — the plan says where
                                                  // the fight happens, so neither is
                                                  // free to move it.
+    struct BlockedSpiderCamp
+    {
+        uint32 order;
+        uint32 instanceId;
+        Position from;
+    };
+    std::vector<BlockedSpiderCamp> blockedSpiderCamps;
+
     bool        roomCampFight = false;           // this pull was taken during a
                                                  // room-clear whose row carries a
                                                  // camp box (Moroes' Banquet Hall).
@@ -572,6 +580,13 @@ struct DcPullContext
             default:
                 return false;
         }
+    }
+
+    void ResetCampRecallProgress()
+    {
+        campHoldBest = 0.0f;
+        campHoldClosest = 0.0f;
+        campHoldRunaway = false;
     }
 
     // --- camp ownership (see campPublishedMs) -----------------------------

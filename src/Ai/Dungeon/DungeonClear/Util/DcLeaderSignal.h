@@ -186,7 +186,7 @@ public:
     // on purpose: the party must be kept out of the room for the WHOLE maneuver,
     // not only once the fight lands, and the earlier phases are exactly when the
     // room is still full of the pack that has not been pulled.
-    static bool IsLeaderScriptedPullActive(Player* bot);
+    static bool IsLeaderScriptedPullActive(Player* bot, bool* spiderStage = nullptr);
 
     // The GENERAL "tank is fighting -> the party assists" gate: true when `bot`'s
     // elected leader tank is in combat on an active (enabled, unpaused) run and

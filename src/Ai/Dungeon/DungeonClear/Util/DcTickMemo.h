@@ -109,6 +109,8 @@ public:
     // registry entry point is the uncached one. (Rows are static table entries, so
     // the pointer is stable for the process lifetime.)
     static ScriptedPullStage const* ScriptedStage(Player* bot, AiObjectContext* ctx);
+    static void InvalidateScriptedStage(AiObjectContext* ctx);
+    static bool SpiderStageBlocksBoss(Player* bot, AiObjectContext* ctx, std::uint32_t boss);
 
     // DcEngageGeometry::IsLevelReachable, memoised per candidate for this tick.
     // Same-level candidates short-circuit without touching the memo; only the

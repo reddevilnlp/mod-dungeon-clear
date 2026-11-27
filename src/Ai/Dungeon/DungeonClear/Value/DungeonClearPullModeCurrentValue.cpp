@@ -7,17 +7,20 @@
 
 #include "Creature.h"
 #include "Playerbots.h"
+#include "Timer.h"
 #include "Ai/Dungeon/DungeonClear/Data/DungeonBossInfo.h"
 #include "Ai/Dungeon/DungeonClear/Data/FightInPlaceRegistry.h"
 #include "Ai/Dungeon/DungeonClear/Data/ScriptedPullRegistry.h"
 #include "Ai/Dungeon/DungeonClear/DcPullContext.h"
 #include "Ai/Dungeon/DungeonClear/Util/DcBossStandDown.h"
 #include "Ai/Dungeon/DungeonClear/Util/DcLeaderSignal.h"
+#include "Ai/Dungeon/DungeonClear/Util/DcNaxx40AnubApproach.h"
 #include "Ai/Dungeon/DungeonClear/Util/DcNaxx40GluthTransit.h"
 #include "Ai/Dungeon/DungeonClear/Util/DcNaxx40LoathebTransit.h"
 #include "Ai/Dungeon/DungeonClear/Util/DcNaxx40Patchwerk.h"
 #include "Ai/Dungeon/DungeonClear/Util/DcNaxx40LivingPoison.h"
 #include "Ai/Dungeon/DungeonClear/Util/DcNoStopZone.h"
+#include "Ai/Dungeon/DungeonClear/Util/DcRun.h"
 #include "Ai/Dungeon/DungeonClear/Util/DcTargeting.h"
 #include "Ai/Dungeon/DungeonClear/Util/DcTickMemo.h"
 #include "Ai/Dungeon/DungeonClear/Util/DungeonClearUtil.h"
@@ -124,13 +127,27 @@ bool DungeonClearPullModeCurrentValue::Calculate()
     // and passive at the one already standing.
     auto const next = bot->GetMapId() == 533
         ? AI_VALUE(std::optional<DungeonBossInfo>, DcKey::NextDungeonBoss) : std::nullopt;
-    if ((pull.phase == DcPullPhase::Idle && next && DcNaxx40GluthTransit::BlocksGeneric(bot, next->entry)) ||
+    bool const anubInPlace = next && DcNaxx40AnubApproach::AppliesTo(bot, next->entry);
+    bool& anubModeForced = DcRun::Of(context).naxx40AnubPullModeForced;
+    if (anubInPlace)
+        anubModeForced = true;
+    else if (anubModeForced)
+    {
+        // Skip and Go reset the transient maneuver before changing the objective.
+        // Restore the player's preference through the same handback as events.
+        anubModeForced = false;
+        pull.eventForced = true;
+    }
+    if (anubInPlace ||
+        (pull.phase == DcPullPhase::Idle && next && DcNaxx40GluthTransit::BlocksGeneric(bot, next->entry)) ||
         DcNaxx40LoathebTransit::HoldsProgression(botAI) ||
         DungeonEventExecutor::IsPullOwningEventDriving(bot, context) ||
         DcNoStopZone::IsInNoStopZone(bot, context) ||
         DcBossStandDown::IsActive(bot))
     {
         pull.ClearDynamicVerdict();
+        if (anubInPlace && pull.HasCamp())
+            pull.PublishCamp(Position(), getMSTime());
         // LOWER THE LATCHED BOOL TOO, not just the effective value. Returning
         // false here skips UpdateDynamicPullMode, which is the only writer of
         // DcKey::PullMode — so whatever the governor had latched when the event
@@ -140,7 +157,7 @@ bool DungeonClearPullModeCurrentValue::Calculate()
         // the party at a stale camp while the tank fights the event alone. Latched
         // as `eventForced` so the handback below can never clobber a player choice,
         // exactly like scriptedForced one clause down.
-        if (!pull.eventForced)
+        if (!pull.eventForced || (anubInPlace && context->GetValue<bool>(DcKey::PullMode)->Get()))
         {
             pull.eventForced = true;
             context->GetValue<bool>(DcKey::PullMode)->Set(false);

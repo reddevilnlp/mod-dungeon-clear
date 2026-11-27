@@ -5,6 +5,10 @@
 
 #include "DcLeaderSignal.h"
 
+#include "Ai/Dungeon/DungeonClear/Data/ScriptedPullRegistry.h"
+#include "Ai/Dungeon/DungeonClear/Util/DcNaxx40AnubApproach.h"
+#include "Ai/Dungeon/DungeonClear/Util/DcNaxx40SpiderQuarter.h"
+#include "Ai/Raid/Naxx40/Naxx40Encounter.h"
 #include "DungeonClearUtil.h"   // DC_PULL_* log macros
 #include "DungeonClearMath.h"
 #include "DungeonClearTuning.h"
@@ -764,6 +768,12 @@ bool DcLeaderSignal::GetLeaderCampHold(Player* bot, Position& campOut, bool& pas
         return false;
 
     AiObjectContext* ctx = leaderAI->GetAiObjectContext();
+    if (Position const* camp = DcNaxx40AnubApproach::ActiveCampHold(leader, ctx))
+    {
+        campOut = *camp;
+        passiveOut = true;
+        return true;
+    }
     DcPullContext const& pull = ctx->GetValue<DcPullContext&>(DcKey::PullContext)->Get();
     // `bossPullback` substitutes for the pull-mode bool — see GetLeaderPullInfo.
     if (!DcRun::Of(ctx).enabled ||
@@ -888,9 +898,13 @@ namespace
     }
 }
 
-bool DcLeaderSignal::IsLeaderScriptedPullActive(Player* bot)
+bool DcLeaderSignal::IsLeaderScriptedPullActive(Player* bot, bool* spiderStage)
 {
-    return LeaderScriptedPull(bot) != nullptr;
+    DcPullContext const* const pull = LeaderScriptedPull(bot);
+    if (spiderStage)
+        *spiderStage = pull && IsNaxx40Map(bot->FindMap()) &&
+            DcNaxx40SpiderQuarter::IsStage(ScriptedPullRegistry::Find(bot->GetMapId(), pull->scriptedStage));
+    return pull != nullptr;
 }
 
 bool DcLeaderSignal::IsLeaderScriptedCampFight(Player* bot)
@@ -1168,6 +1182,13 @@ bool DcLeaderSignal::IsLeaderDynamicScouting(Player* bot)
     // (On) — so the lag would only ever delay them for no benefit there.
     if (ctx->GetValue<uint32>(DcKey::PullSetting)->Get() != 2u)
         return false;
+
+    if (leader->GetMapId() == 533)
+    {
+        auto const next = ctx->GetValue<std::optional<DungeonBossInfo>>(DcKey::NextDungeonBoss)->Get();
+        if (next && DcNaxx40AnubApproach::AppliesTo(leader, next->entry))
+            return false;
+    }
 
     // While an event that OWNS THE PULL drives (ZulFarrak's temple; BWL's
     // Suppression Rooms crossing), the pull system is forced Off (see
@@ -1536,6 +1557,8 @@ bool DcLeaderSignal::IsLeaderPullHoldReleased(Player* bot)
     if (!leaderAI)
         return false;
     AiObjectContext* ctx = leaderAI->GetAiObjectContext();
+    if (DcNaxx40AnubApproach::ActiveCampHold(leader, ctx))
+        return false;
     return ctx->GetValue<DcPullContext&>(DcKey::PullContext)->Get().partyReleased;
 }
 ObjectGuid DcLeaderSignal::GetLeaderPullTarget(Player* bot)

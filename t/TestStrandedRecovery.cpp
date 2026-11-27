@@ -337,6 +337,68 @@ TEST(DcStrandedRecoveryTest, CampTestUsesOnlyTheCampsOwnRadius)
     EXPECT_FALSE(IsStranded(14.0f, 60.0f, 25.0f, 100000.0f));
 }
 
+TEST(DcStrandedRecoveryTest, SpiderFormingKeepsFollowersAtCamp)
+{
+    Inputs in = StaleInputs();
+    in.maxSpread = 40.0f;
+    in.gateSpread = 8.0f;
+    in.campOnly = true;
+    std::vector<Member> party = BaseParty();
+
+    // In the v45-r6 Faerlina 361781 pull, the rescue logged Aguaviva 62 yd from
+    // the tank. Her best distance to her slot put her within about 5.2 yd of camp.
+    Strand(party, 1, 62.0f);
+    party[1].distToGate = 5.2f;
+    Strand(party, 2, 65.0f);
+    party[2].distToGate = 8.0f;
+    party[3].distToGate = 4.0f;
+
+    Result const r = Decide(in, party);
+    EXPECT_FALSE(r.recover);
+    EXPECT_TRUE(r.strandedIdx.empty());
+}
+
+TEST(DcStrandedRecoveryTest, SpiderFormingRescuesCampOutliersAfterTimeout)
+{
+    Inputs in = StaleInputs();
+    in.maxSpread = 40.0f;
+    in.gateSpread = 8.0f;
+    in.campOnly = true;
+    std::vector<Member> party = BaseParty();
+
+    // Same X/Y as the camp at Z 287.079, with the follower on Z 250.
+    Strand(party, 1, 76.0f);
+    party[1].distToGate = 37.079f;
+    // A follower still next to the tank can be far outside the camp.
+    Strand(party, 2, 2.0f);
+    party[2].distToGate = 65.0f;
+    // Salvaguarda was 41 yd from the tank before the rescue. She had only
+    // come within 25.8 yd of her slot, about 2 yd from the camp center.
+    Strand(party, 3, 41.0f);
+    party[3].distToGate = 23.8f;
+
+    --in.nowMs;
+    EXPECT_FALSE(Decide(in, party).recover);
+    ++in.nowMs;
+
+    Result const r = Decide(in, party);
+    EXPECT_TRUE(r.recover);
+    EXPECT_EQ(r.strandedIdx, (std::vector<int>{1, 2, 3}));
+}
+
+TEST(DcStrandedRecoveryTest, SpiderFormingRequiresAValidCampDistance)
+{
+    using DcStrandedDecision::IsStranded;
+    EXPECT_FALSE(IsStranded(62.0f, -1.0f, 40.0f, 8.0f, /*campOnly*/ true));
+    EXPECT_FALSE(IsStranded(62.0f, 9.0f, 40.0f, 0.0f, /*campOnly*/ true));
+
+    // Generic recovery still accepts either origin and defaults to tank-only
+    // distance when no camp distance is supplied.
+    EXPECT_TRUE(IsStranded(62.0f, -1.0f, 40.0f, 8.0f));
+    EXPECT_TRUE(IsStranded(62.0f, 5.2f, 40.0f, 8.0f));
+    EXPECT_TRUE(IsStranded(5.0f, 9.0f, 40.0f, 8.0f));
+}
+
 // Degenerate gate readings fall back to the setting rather than to zero — a 0
 // threshold would strand-and-teleport the entire party every timeout.
 TEST(DcStrandedRecoveryTest, RescueSpreadIgnoresANonPositiveGate)

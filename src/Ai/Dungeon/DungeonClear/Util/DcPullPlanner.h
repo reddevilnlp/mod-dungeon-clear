@@ -45,7 +45,7 @@ public:
     // against a wall / on a ledge) it falls back to the exact camp position. The
     // result is stable across ticks for a given (bot, camp), so MoveTo dedups it
     // and the follower settles on one spot instead of jittering.
-    static Position ComputeCampSlot(Player* bot, Position const& camp);
+    static Position ComputeCampSlot(Player* bot, Position const& camp, float fixedSlotLimit = 0.0f);
 
     // Clamped heal-approach point for a held ranged healer during an advanced
     // pull. Returns a navmesh-snapped point at ~85% of healRange from healTarget
@@ -161,7 +161,8 @@ public:
     // Real-player members (no PlayerbotAI) are not waited on. Solo (no group)
     // returns true. Lets the Forming gate hold the tag until the party has
     // actually parked and gone passive, instead of pulling into open ground.
-    static bool IsPartySetAtCamp(Player* leader, Position const& camp, float setRadius);
+    static bool IsPartySetAtCamp(Player* leader, Position const& camp, float setRadius,
+                                Player const** waitingMember = nullptr);
 
 };
 

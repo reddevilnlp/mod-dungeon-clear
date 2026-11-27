@@ -17,6 +17,7 @@
 #include "Ai/Dungeon/DungeonClear/DcPullContext.h"
 #include "Ai/Dungeon/DungeonClear/DcValueKeys.h"
 #include "Ai/Dungeon/DungeonClear/Data/DungeonBossInfo.h"
+#include "Ai/Dungeon/DungeonClear/Util/DcNaxx40SpiderQuarter.h"
 #include "Ai/Dungeon/DungeonClear/Util/DcNaxx40Patchwerk.h"
 #include "Ai/Dungeon/DungeonClear/Util/DcNaxx40LivingPoison.h"
 #include "Ai/Dungeon/DungeonClear/Util/DcTargeting.h"
@@ -664,6 +665,8 @@ namespace
             southSpewers.keepOnPackFloor = true;
             t.push_back(southSpewers);
 
+            DcNaxx40SpiderQuarter::AppendStages(t);
+
             ScriptedPullStage east;
             east.mapId      = MGT_MAP;
             east.bossEntry  = MGT_SELIN;
@@ -905,6 +908,11 @@ Unit* ScriptedPullRegistry::NearestPackMember(Player* bot, AiObjectContext* ctx,
 {
     if (!bot || !ctx)
         return nullptr;
+    if (DcNaxx40SpiderQuarter::IsStage(&s))
+    {
+        DcPullContext const& pull = ctx->GetValue<DcPullContext&>(DcKey::PullContext)->Get();
+        return DcNaxx40SpiderQuarter::NearestPackMember(bot, s, pull.abortTarget);
+    }
     // Shares the events framework's volume scan (entry-filtered, z-banded, and
     // reachability-probed), so "is this pack still up" means the same thing here
     // as it does for a ClearRadius step.
@@ -952,7 +960,8 @@ Unit* ScriptedPullRegistry::NearestPackMember(Player* bot, AiObjectContext* ctx,
                                                 s.HasAvoidAnchor() ? &avoid : nullptr, &s.spawnIds);
 }
 
-ScriptedPullStage const* ScriptedPullRegistry::DueStage(Player* bot, AiObjectContext* ctx)
+ScriptedPullStage const* ScriptedPullRegistry::DueStage(Player* bot, AiObjectContext* ctx,
+    bool includeDeferredCamps)
 {
     if (!bot || !ctx)
         return nullptr;
@@ -981,7 +990,24 @@ ScriptedPullStage const* ScriptedPullRegistry::DueStage(Player* bot, AiObjectCon
     // the live scan all describe whether a pull may START, and this one already has.
     if (pinned >= 0)
         if (ScriptedPullStage const* held = Find(mapId, pinned))
-            return held;
+            if (!DcNaxx40SpiderQuarter::IsStage(held) || held->bossEntry == next->entry)
+                return held;
+
+    // Anub's entry is a single ordered approach. A later pack's arm can
+    // overlap an earlier pack's camp without taking over the walk to it.
+    if (next->entry == DcNaxx40SpiderQuarter::Anub && DcNaxx40SpiderQuarter::UsesApproach(bot, next->entry))
+    {
+        for (ScriptedPullStage const* s : rows)
+        {
+            if (s->bossEntry != next->entry || !NearestPackMember(bot, ctx, *s))
+                continue;
+            bool const armed = InArmRange(*s, bot->GetPositionX(), bot->GetPositionY(), bot->GetPositionZ()) &&
+                DcNaxx40SpiderQuarter::ApproachReady(bot, *s);
+            bool const deferred = !includeDeferredCamps && DcNaxx40SpiderQuarter::CampDeferredHere(*bot, *s, pull);
+            return armed && !deferred ? s : nullptr;
+        }
+        return nullptr;
+    }
 
     std::vector<uint32> orders;
     std::vector<bool> live;
@@ -1002,6 +1028,8 @@ ScriptedPullStage const* ScriptedPullRegistry::DueStage(Player* bot, AiObjectCon
             continue;
         if (!InArmRange(*s, bot->GetPositionX(), bot->GetPositionY(), bot->GetPositionZ()))
             continue;
+        if (DcNaxx40SpiderQuarter::IsStage(s) && !DcNaxx40SpiderQuarter::ApproachReady(bot, *s))
+            continue;
         if (s->bossEntry == Naxx40HorsemenEntry &&
             (!IsNaxx40Map(bot->FindMap()) || std::abs(bot->GetPositionZ() - s->packZ) > s->packZBand ||
              !HorsemenAcolyteApproachClear(bot, ctx)))
@@ -1011,7 +1039,12 @@ ScriptedPullStage const* ScriptedPullRegistry::DueStage(Player* bot, AiObjectCon
     }
 
     int32 const pick = SelectOrder(orders, live, /*pinned*/ -1);
-    return pick < 0 ? nullptr : Find(mapId, pick);
+    ScriptedPullStage const* selected = pick < 0 ? nullptr : Find(mapId, pick);
+    // Yield the route for the current pack before promoting any overlapping stage.
+    if (!includeDeferredCamps && DcNaxx40SpiderQuarter::IsStage(selected) &&
+        DcNaxx40SpiderQuarter::CampDeferredHere(*bot, *selected, pull))
+        return nullptr;
+    return selected;
 }
 
 bool ScriptedPullRegistry::IsStageTarget(ScriptedPullStage const& s, Unit const* u)
@@ -1025,5 +1058,5 @@ bool ScriptedPullRegistry::IsStageTarget(ScriptedPullStage const& s, Unit const*
             return false;
     }
     return IsPackEntry(s, u->GetEntry()) &&
-           InPack(s, u->GetPositionX(), u->GetPositionY(), u->GetPositionZ());
+           (DcNaxx40SpiderQuarter::IsStage(&s) || InPack(s, u->GetPositionX(), u->GetPositionY(), u->GetPositionZ()));
 }

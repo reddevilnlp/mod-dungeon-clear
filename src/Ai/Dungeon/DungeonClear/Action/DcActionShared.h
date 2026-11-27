@@ -132,6 +132,8 @@ namespace DcActionShared
     // The slot is navmesh-validated and players don't physically block one
     // another, so settling this close is always reachable.
     inline constexpr float DC_PULL_SLOT_RADIUS = 1.0f;
+    // Shared 3D readiness radius for the raid and the scripted camp rescue.
+    inline constexpr float DC_PULL_SET_RADIUS = 8.0f;
 
     // --- Shared helpers (used by >=2 families) -----------------------------
 

@@ -44,10 +44,12 @@
 #include "Ai/Dungeon/DungeonClear/Util/DcNaxx40Gothik.h"
 #include "Ai/Dungeon/DungeonClear/Util/DcNaxx40Horsemen.h"
 #include "Ai/Dungeon/DungeonClear/Util/DcNaxx40KelThuzad.h"
+#include "Ai/Dungeon/DungeonClear/Util/DcNaxx40AnubApproach.h"
 #include "Ai/Dungeon/DungeonClear/Util/DcNaxx40Razuvious.h"
 #include "Ai/Dungeon/DungeonClear/Util/DcNaxx40Thaddius.h"
 #include "Ai/Dungeon/DungeonClear/Util/DcNaxx40LivingPoison.h"
 #include "Ai/Dungeon/DungeonClear/Util/DcNaxx40Patchwerk.h"
+#include "Ai/Dungeon/DungeonClear/Util/DcNaxx40SpiderQuarter.h"
 #include "Ai/Dungeon/DungeonClear/Util/DcNoStopZone.h"
 #include "Ai/Dungeon/DungeonClear/Util/DcPartyState.h"
 #include "Ai/Dungeon/DungeonClear/Util/DcPlayerbotCompat.h"
@@ -307,6 +309,8 @@ bool DungeonClearAtBossTrigger::IsActive()
     if (DcNaxx40GluthTransit::BlocksGeneric(bot, next->entry) ||
         DcNaxx40Thaddius::BlocksGeneric(bot, next->entry) ||
         DcNaxx40LivingPoison::BlocksGrobbulusPull(botAI, next->entry))
+        return false;
+    if (DcTickMemoAccess::SpiderStageBlocksBoss(bot, context, next->entry))
         return false;
     bool const gothik = DcNaxx40Gothik::UsesRangedPull(bot, next->entry);
     bool const grobbulusPatrol = DcNaxx40LivingPoison::UsesGrobbulusPatrol(botAI, next->entry);
@@ -632,6 +636,9 @@ bool DungeonClearBlockingTrashTrigger::IsActive()
     std::optional<DungeonBossInfo> next = AI_VALUE(std::optional<DungeonBossInfo>, DcKey::NextDungeonBoss);
     if (!next || DcNaxx40GluthTransit::BlocksGeneric(bot, next->entry))
         return false;
+
+    if (!bot->IsInCombat() && DcNaxx40AnubApproach::OwnsApproach(bot, context, next->entry))
+        return false;
     if (DcNaxx40Patchwerk::SweepInProgress(bot, context, next->entry) ||
         DcNaxx40Patchwerk::ShouldStart(bot, context, next->entry) ||
         DcNaxx40Patchwerk::AtEmbalmingHandoff(bot, context, next->entry))
@@ -644,7 +651,9 @@ bool DungeonClearBlockingTrashTrigger::IsActive()
     bool const patchwerk = DcNaxx40Patchwerk::SetApproachAnchor(bot, context, *next);
     if (!patchwerk && DcTickMemoAccess::AtBossEngage(bot, context, *next))
         return false;
-    if (patchwerk && DcTickMemoAccess::ScriptedStage(bot, context))
+    if ((patchwerk && DcTickMemoAccess::ScriptedStage(bot, context)) ||
+        (DcNaxx40SpiderQuarter::UsesApproach(bot, next->entry) &&
+         DcNaxx40SpiderQuarter::IsStage(DcTickMemoAccess::ScriptedStage(bot, context))))
         return false;
 
     // Wait between pulls for loot, party catch-up, and rest.
@@ -1079,7 +1088,8 @@ bool DungeonClearStalledTrigger::IsActive()
         return false;
     if (std::optional<DungeonBossInfo> const next = AI_VALUE(std::optional<DungeonBossInfo>, DcKey::NextDungeonBoss);
         next && (DcNaxx40GluthTransit::BlocksGeneric(bot, next->entry) ||
-                 DcNaxx40Thaddius::BlocksGeneric(bot, next->entry)))
+                 DcNaxx40Thaddius::BlocksGeneric(bot, next->entry) ||
+                 DcNaxx40AnubApproach::OwnsApproach(bot, context, next->entry)))
         return false;
 
     // Wait between pulls for loot, party catch-up, and rest before pulling
@@ -1425,9 +1435,11 @@ bool DungeonClearPullTrigger::IsActive()
     // a PULL-BACK boss: the pull pipeline is the ONLY thing that may engage him,
     // because the walk-in engage would go to where he stands — which for Ghaz'an is
     // the middle of a lake.
+    ScriptedPullStage const* const dueStage = DcTickMemoAccess::ScriptedStage(bot, context);
     if (!DcNaxx40Patchwerk::UsesPatrolCamp(bot, context, next->entry) &&
         DcTickMemoAccess::AtBossEngage(bot, context, *next) &&
-        !DcTargeting::IsRoomClearActive(bot, context) && !pullback)
+        !DcTargeting::IsRoomClearActive(bot, context) && !pullback &&
+        !DcNaxx40SpiderQuarter::IsStage(dueStage))
         return false;
     if (!IsBetweenPullsReady(bot, context))
         return false;
@@ -1461,7 +1473,6 @@ bool DungeonClearPullTrigger::IsActive()
     // still fought in place by the walk-in engage. Deliberately keyed on the stage's
     // own pack volume rather than on "a stage is due", so a stray mob that wanders
     // into the room mid-plan is not silently promoted to pullable.
-    ScriptedPullStage const* const dueStage = DcTickMemoAccess::ScriptedStage(bot, context);
     if (FightInPlaceRegistry::IsNoPullZone(bot->GetMapId(), trash->GetPositionX(),
                                            trash->GetPositionY()) &&
         !(dueStage && ScriptedPullRegistry::IsStageTarget(*dueStage, trash)))

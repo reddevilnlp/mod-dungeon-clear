@@ -8,9 +8,12 @@
 #include <cmath>
 
 #include "DcEngageGeometry.h"
+#include "DcNaxx40AnubApproach.h"
+#include "DcNaxx40SpiderQuarter.h"
 #include "DcPartyState.h"
 #include "DungeonClearTuning.h"   // DC_ENGAGE_RANGE, DC_Z_LEVEL_TOLERANCE
 #include "Ai/Dungeon/DungeonClear/Data/ScriptedPullRegistry.h"
+#include "Ai/Dungeon/DungeonClear/DcPullContext.h"
 #include "Player.h"
 #include "Timer.h"
 #include "Unit.h"
@@ -87,6 +90,26 @@ ScriptedPullStage const* DcTickMemoAccess::ScriptedStage(Player* bot, AiObjectCo
     // an int keeps the memo a plain trivially-copyable POD that EnsureFresh can
     // reset by assignment). Re-resolving it is a two-row table walk.
     return ScriptedPullRegistry::Find(bot->GetMapId(), m.scriptedStage);
+}
+
+void DcTickMemoAccess::InvalidateScriptedStage(AiObjectContext* ctx)
+{
+    Memo(ctx).scriptedStage = -2;
+}
+
+bool DcTickMemoAccess::SpiderStageBlocksBoss(Player* bot, AiObjectContext* ctx, std::uint32_t boss)
+{
+    if (DcNaxx40AnubApproach::AppliesTo(bot, boss))
+        return DcNaxx40AnubApproach::OwnsApproach(bot, ctx, boss);
+    if (!DcNaxx40SpiderQuarter::UsesApproach(bot, boss))
+        return false;
+    if (DcNaxx40SpiderQuarter::IsStage(ScriptedStage(bot, ctx)))
+        return true;
+
+    // A temporary movement handoff does not clear live trash at the boss.
+    DcPullContext const& pull = ctx->GetValue<DcPullContext&>(DcKey::PullContext)->Get();
+    return !pull.blockedSpiderCamps.empty() &&
+        DcNaxx40SpiderQuarter::IsStage(ScriptedPullRegistry::DueStage(bot, ctx, /*includeDeferredCamps*/ true));
 }
 
 bool DcTickMemoAccess::LevelReachable(Player* bot, AiObjectContext* ctx, Unit* u)

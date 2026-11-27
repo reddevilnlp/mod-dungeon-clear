@@ -50,6 +50,7 @@
 #include "Ai/Dungeon/DungeonClear/Util/DcDoorPolicy.h"
 #include "Ai/Dungeon/DungeonClear/Util/DcMovement.h"
 #include "Ai/Dungeon/DungeonClear/Util/DcNaxx40SlimeCrossing.h"
+#include "Ai/Dungeon/DungeonClear/Util/DcNaxx40AnubApproach.h"
 #include "Ai/Dungeon/DungeonClear/Util/DcNaxx40GluthTransit.h"
 #include "Ai/Dungeon/DungeonClear/Util/DcNaxx40Gothik.h"
 #include "Ai/Dungeon/DungeonClear/Util/DcNaxx40Horsemen.h"
@@ -59,6 +60,7 @@
 #include "Ai/Dungeon/DungeonClear/Util/DcNaxx40WingPortal.h"
 #include "Ai/Dungeon/DungeonClear/Util/DcNaxx40LivingPoison.h"
 #include "Ai/Dungeon/DungeonClear/Util/DcNaxx40Patchwerk.h"
+#include "Ai/Dungeon/DungeonClear/Util/DcNaxx40SpiderQuarter.h"
 #include "Ai/Dungeon/DungeonClear/Util/DcPathWorker.h"
 #include "Ai/Dungeon/DungeonClear/Util/DcSocialQuarantine.h"
 #include "Ai/Dungeon/DungeonClear/Util/DcTargeting.h"
@@ -2338,6 +2340,13 @@ bool DungeonClearAdvanceAction::Execute(Event event)
     if (Step s = TryLootYield(st); s != Step::Continue)
         return s == Step::ReturnTrue;
 
+    if (DcNaxx40AnubApproach::OwnsApproach(bot, context, next->entry))
+    {
+        if (Step s = TryBetweenPullsRest(st); s != Step::Continue)
+            return s == Step::ReturnTrue;
+        return DcNaxx40AnubApproach::Drive(botAI);
+    }
+
     if (auto const staged = DcNaxx40Horsemen::Stage(*botAI, *next))
         return *staged;
 
@@ -2383,7 +2392,9 @@ bool DungeonClearAdvanceAction::Execute(Event event)
         }
     }
 
-    if (patchwerk && DcTickMemoAccess::ScriptedStage(bot, context))
+    if ((patchwerk && DcTickMemoAccess::ScriptedStage(bot, context)) ||
+        (DcNaxx40SpiderQuarter::UsesApproach(bot, next->entry) &&
+         DcNaxx40SpiderQuarter::IsStage(DcTickMemoAccess::ScriptedStage(bot, context))))
     {
         DcMovement::StopBot(bot, DcMovement::Stop::Hold);
         return false;

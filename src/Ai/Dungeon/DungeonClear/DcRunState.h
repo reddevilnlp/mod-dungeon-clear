@@ -167,6 +167,19 @@ struct DcRunState
         bool useNormalPull = false;
     } naxx40RazuviousOpening;
     uint32 naxx40GothikTagMs = 0;
+    struct AnubApproach
+    {
+        uint32 instanceId = 0;
+        uint32 formation = 0;
+        uint32 lastTagAttempt = 0;
+        bool reachedCampOne = false;
+        bool reachedStand = false;
+        std::optional<Position> campHold;
+        uint32 campHoldSince = 0;
+        uint32 campHoldCheckedAt = 0;
+    };
+    AnubApproach naxx40AnubApproach;
+    bool naxx40AnubPullModeForced = false;
 
     struct ThaddiusOpening
     {

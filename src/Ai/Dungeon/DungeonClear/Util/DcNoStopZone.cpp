@@ -13,15 +13,43 @@
 #include "Ai/Dungeon/DungeonClear/DcValueKeys.h"
 #include "Ai/Dungeon/DungeonClear/Util/DcTickMemo.h"
 #include "Ai/Dungeon/DungeonClear/Util/DungeonClearTuning.h"
+#include "Ai/Raid/Naxx40/Naxx40Encounter.h"
 
 #include "AiObjectContext.h"
 #include "Map.h"
 #include "Player.h"
+#include "Position.h"
 #include "Timer.h"
 #include "Value.h"
 
 namespace DcNoStopZone
 {
+    namespace
+    {
+        constexpr float MaexxnaBridgeFloorMin = 265.5f;
+        constexpr float MaexxnaBridgeFloorMax = 276.5f;
+    }
+
+    bool IsMaexxnaBridgeBank(Player const& bot, Position const& point)
+    {
+        // Both pads were surveyed to a seven-yard radius. The camp may snap
+        // a little, leaving six yards for the actual follower slots.
+        return IsNaxx40Map(bot.FindMap()) &&
+            (point.GetExactDistSq(3103.0f, -3795.0f, 274.168f) <= 1.0f ||
+             point.GetExactDistSq(3104.0f, -3847.0f, 267.596f) <= 1.0f);
+    }
+
+    bool IsMaexxnaBridgeCampForbidden(Player const& bot, Position const& point)
+    {
+        // Include the margins where a dry camp center can still put followers
+        // in slime. The v30 camp at (3114.3, -3796.7) had that failure.
+        return IsNaxx40Map(bot.FindMap()) &&
+            point.GetPositionX() >= 3095.0f && point.GetPositionX() <= 3121.5f &&
+            point.GetPositionY() >= -3854.0f && point.GetPositionY() <= -3788.0f &&
+            point.GetPositionZ() >= MaexxnaBridgeFloorMin && point.GetPositionZ() <= MaexxnaBridgeFloorMax &&
+            !IsMaexxnaBridgeBank(bot, point);
+    }
+
     float DistSqToSegment(float px, float py, float pz,
                           WaypointHint const& a, WaypointHint const& b)
     {
@@ -68,6 +96,14 @@ namespace DcNoStopZone
             Map const* const map = bot->GetMap();
             if (!map || !map->IsDungeon())
                 return false;
+
+            // The deck is transit in either direction, even when the party
+            // has changed objective. Bank camps remain available outside it.
+            if (IsNaxx40Map(map) &&
+                bot->GetPositionX() >= 3098.0f && bot->GetPositionX() <= 3108.0f &&
+                bot->GetPositionY() > -3846.0f && bot->GetPositionY() < -3796.0f &&
+                bot->GetPositionZ() >= MaexxnaBridgeFloorMin && bot->GetPositionZ() <= MaexxnaBridgeFloorMax)
+                return true;
 
             // Resolve the route exactly as Advance does — (map, difficulty, the
             // current objective's entry) — so the zone follows the party from

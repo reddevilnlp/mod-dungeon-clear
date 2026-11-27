@@ -117,7 +117,7 @@ namespace DcSocialQuarantine
         if (bossEntry && anyScriptedRow)
             for (ScriptedPullStage const* s : ScriptedPullRegistry::Rows(mapId))
             {
-                if (s->bossEntry != bossEntry)
+                if (!s->quarantineOtherPacks || s->bossEntry != bossEntry)
                     continue;
                 // The due/in-flight stage is the pull; releasing it is the whole
                 // point of naming an active stage at all.
@@ -139,8 +139,9 @@ namespace DcSocialQuarantine
         std::vector<HeldVolume> known;
         if (anyScriptedRow)
             for (ScriptedPullStage const* s : ScriptedPullRegistry::Rows(mapId))
-                known.push_back({s->name, s->packX, s->packY, s->packZ, s->packRadius,
-                                 s->packZBand, &s->entries});
+                if (s->quarantineOtherPacks)
+                    known.push_back({s->name, s->packX, s->packY, s->packZ, s->packRadius,
+                                     s->packZBand, &s->entries});
         if (anyRegistryZone)
             for (DcQuarantineZone const* z : DcSocialQuarantineRegistry::AllZones(mapId))
                 known.push_back({z->name, z->x, z->y, z->z, z->radius, z->zBand,
@@ -200,8 +201,9 @@ namespace DcSocialQuarantine
         std::vector<HeldVolume> known;
         if (anyScriptedRow)
             for (ScriptedPullStage const* s : ScriptedPullRegistry::Rows(mapId))
-                known.push_back({s->name, s->packX, s->packY, s->packZ, s->packRadius,
-                                 s->packZBand, &s->entries});
+                if (s->quarantineOtherPacks)
+                    known.push_back({s->name, s->packX, s->packY, s->packZ, s->packRadius,
+                                     s->packZBand, &s->entries});
         if (anyRegistryZone)
             for (DcQuarantineZone const* z : DcSocialQuarantineRegistry::AllZones(mapId))
                 known.push_back({z->name, z->x, z->y, z->z, z->radius, z->zBand,

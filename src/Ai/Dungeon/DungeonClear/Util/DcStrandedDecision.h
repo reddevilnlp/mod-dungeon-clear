@@ -100,6 +100,7 @@ namespace DcStrandedDecision
         bool          partyEngaged = false;      // a real fight (not the bare flag)
         float         maxSpread = 25.0f;          // out-of-range threshold; see RescueSpread
         float         gateSpread = 0.0f;          // camp-anchored gate's own spread; 0 = no camp test
+        bool          campOnly = false;          // a programmed muster owns both the range check and the destination
     };
 
     struct Result
@@ -124,11 +125,11 @@ namespace DcStrandedDecision
     // "Waiting on Zesh (out of range)" until the 900s watchdog. The teleport lands
     // the member at the tank, which a live camp keeps within its standoff of the
     // camp, and Recover then re-anchors the camp onto walked ground.
-    inline bool IsStranded(float distToTank, float distToGate, float maxSpread, float gateSpread)
+    inline bool IsStranded(float distToTank, float distToGate, float maxSpread, float gateSpread,
+                           bool campOnly = false)
     {
-        if (distToTank > maxSpread)
-            return true;
-        return gateSpread > 0.0f && distToGate >= 0.0f && distToGate > gateSpread;
+        bool const outsideCamp = gateSpread > 0.0f && distToGate >= 0.0f && distToGate > gateSpread;
+        return outsideCamp || (!campOnly && distToTank > maxSpread);
     }
 
     // The verdict. Returns recover=false (no strays) whenever the feature is off,
@@ -155,7 +156,7 @@ namespace DcStrandedDecision
             Member const& m = members[i];
             if (m.isTank || !m.isBot || !m.isAlive || !m.onMap)
                 continue;
-            if (IsStranded(m.distToTank, m.distToGate, in.maxSpread, in.gateSpread))
+            if (IsStranded(m.distToTank, m.distToGate, in.maxSpread, in.gateSpread, in.campOnly))
                 r.strandedIdx.push_back(static_cast<int>(i));
         }
         r.recover = !r.strandedIdx.empty();
