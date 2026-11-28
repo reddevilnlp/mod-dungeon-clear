@@ -605,6 +605,7 @@ namespace
             RegisterMoltenCoreEvents(t);
             RegisterZulGurubEvents(t);
             RegisterTempleOfAhnQirajEvents(t);
+            RegisterNaxxramasEvents(t);
             RegisterVioletHoldEvents(t);
             RegisterBlackwingLairEvents(t);
             RegisterHallsOfStoneEvents(t);

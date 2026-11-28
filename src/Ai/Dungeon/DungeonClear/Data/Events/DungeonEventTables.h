@@ -886,6 +886,7 @@ void RegisterVioletHoldEvents(std::vector<DungeonEvent>& out);
 void RegisterMoltenCoreEvents(std::vector<DungeonEvent>& out);
 void RegisterZulGurubEvents(std::vector<DungeonEvent>& out);
 void RegisterTempleOfAhnQirajEvents(std::vector<DungeonEvent>& out);
+void RegisterNaxxramasEvents(std::vector<DungeonEvent>& out);
 
 // --- Halls of Stone (map 599) ---------------------------------------------
 //
