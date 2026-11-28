@@ -204,6 +204,21 @@ TEST(DcHazardRegistry, FindIsKeyedOnBothMapAndEntry)
     EXPECT_EQ(DcHazardRegistry::Find(0, 20869), nullptr);     // right entry, wrong map
 }
 
+// Naxxramas 40's Embalming Slime (351026): 8yd Embalming Cloud every 2s, fought
+// from range with everyone kept out, like the Creeping Sludge.
+TEST(DcHazardRegistry, Naxx40EmbalmingSlimeIsAStayOutEmitter)
+{
+    DcHazardEmitter const* slime = DcHazardRegistry::Find(533, 351026);
+    ASSERT_NE(slime, nullptr);
+    EXPECT_FLOAT_EQ(slime->vacateRadius, 8.0f);   // the raw 28322 radius
+    EXPECT_FLOAT_EQ(slime->radius, 11.0f);        // + 3yd placement drift
+    EXPECT_GT(slime->retreatSlack, slime->holdBand);
+    EXPECT_TRUE(DcHazardRegistry::HasEmitters(533));
+
+    // The WotLK slime (16024) is not flagged.
+    EXPECT_EQ(DcHazardRegistry::Find(533, 16024), nullptr);
+}
+
 // ---- the ground-pool half -----------------------------------------------
 // Scholomance's "Cloud of Disease" (17742): a persistent area aura, i.e. a
 // DynamicObject and not a creature, dropped where a Diseased Ghoul (10495) dies.

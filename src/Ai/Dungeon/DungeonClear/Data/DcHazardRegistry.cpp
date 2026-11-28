@@ -300,7 +300,26 @@ namespace
     // safe-spot hop (DcIronHall, DungeonClearIronHallSafeSpot): four fire-free
     // stops on the centre line, and every member hops to one rather than stand in
     // the fire. See DcBlackrockDepths' Iron Hall block.
-    constexpr std::array<DcHazardEmitter, 13> kEmitters = {{
+    //
+    // ---- Naxxramas 40 (533): Embalming Slimes ------------------------------
+    //
+    // mod-individual-progression's 40-man Embalming Slime 351026: 16 elites
+    // (level 60, faction 21) standing still on the walk from the Construct
+    // Quarter entrance to Patchwerk (x 3116-3150, y -3195..-3227, z 294.24).
+    // SmartAI event 60 (UPDATE, in and out of combat) casts 28322 Embalming
+    // Cloud on itself every 2000ms: instant nature damage, ~3515-4086, 8yd
+    // radius, enemies around the caster. No DynamicObject, no aura, so it is
+    // the creature kind. The archived Naxx40 notes count it as the main killer
+    // on the way to Patchwerk (13 of 14 deaths in one segment).
+    //
+    // The Creeping Sludge shape: a mob the party kills from range while
+    // everyone stays out of the pulse. Vacate the raw 8yd, keep-out 11 for
+    // placement drift, hold 6 / slack 9 so a bot pushed back in by its own
+    // chase keeps orbiting outside; the retreat aims at 17yd, inside every
+    // caster's range. The slimes do not move out of combat, but no
+    // DcNavPenaltyRegistry boxes: they stand on the walk itself, so the live
+    // segment checks are the route defence.
+    constexpr std::array<DcHazardEmitter, 14> kEmitters = {{
         //                    radius  zBand  vacate  hold  slack
         { 578, 28166, /*Unstable Sphere    (leave once)  */  6.0f,  8.0f,  8.0f, 2.0f, 6.0f },
         { 668, 36954, /*Lich King, Remorseless Winter    */ 12.0f, 10.0f,  0.0f, 2.0f, 6.0f },
@@ -315,6 +334,7 @@ namespace
         { 599, 28237, /*Dark Matter Target (leave once)  */  8.0f, 12.0f,  5.0f, 2.0f, 6.0f },
         { 230, 108982, /*Ironhand Guardian (IP, avoided) */ 30.0f, 12.0f,  0.0f, 2.0f, 6.0f },
         { 230,  8982, /*Ironhand Guardian (avoided)      */ 30.0f, 12.0f,  0.0f, 2.0f, 6.0f },
+        { 533, 351026, /*Embalming Slime (IP, STAY OUT)  */ 11.0f,  6.0f,  8.0f, 6.0f, 9.0f },
     }};
 
     // ---- the ground-pool table ------------------------------------------
