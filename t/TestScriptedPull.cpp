@@ -1797,3 +1797,115 @@ TEST(DcScriptedPullTest, TheEastRotundaRowTagsAtRangeFromTheStandSpot)
         << "the north-east pack reaches the camp within 15yd of the east pack's haul, "
            "so the two formations arrive together and the head start is gone";
 }
+
+// --- Naxxramas 40 (individual progression, 533): the Embalming Slimes ---------------
+//
+// Two rows: the Sludge Belcher that stands inside the slimes' stand spot's reach, then
+// the sixteen linked slimes, fought by the ranged DPS alone. Spawns are the IP ones
+// (spawnMask 4) from `creature`.
+
+namespace
+{
+    uint32 constexpr NX40 = 533;
+    uint32 constexpr NX40_PATCHWERK = 351028;
+    uint32 constexpr NX40_SLIME = 351026;
+    uint32 constexpr NX40_BELCHER = 351029;
+
+    std::vector<std::pair<float, float>> const& Nx40Slimes()
+    {
+        // guids 361162-361177
+        static std::vector<std::pair<float, float>> const k = {
+            {3132.5f, -3227.5f}, {3122.4f, -3224.9f}, {3144.8f, -3225.0f}, {3138.0f, -3221.1f},
+            {3126.7f, -3220.5f}, {3149.5f, -3216.9f}, {3131.0f, -3213.3f}, {3116.5f, -3213.9f},
+            {3138.4f, -3208.6f}, {3128.6f, -3206.8f}, {3117.5f, -3207.4f}, {3137.3f, -3202.9f},
+            {3150.4f, -3205.3f}, {3123.9f, -3199.2f}, {3143.5f, -3198.3f}, {3129.3f, -3195.8f}};
+        return k;
+    }
+
+    float Nx40Dist(float ax, float ay, float bx, float by)
+    {
+        return std::hypot(ax - bx, ay - by);
+    }
+
+    float NearestSlime(float x, float y)
+    {
+        float best = 1e9f;
+        for (auto const& s : Nx40Slimes())
+            best = std::min(best, Nx40Dist(x, y, s.first, s.second));
+        return best;
+    }
+}
+
+TEST(DcScriptedPullTest, Naxx40HasTheBelcherThenTheSlimes)
+{
+    ASSERT_TRUE(ScriptedPullRegistry::HasRows(NX40));
+    std::vector<ScriptedPullStage const*> const rows = ScriptedPullRegistry::Rows(NX40);
+    ASSERT_EQ(rows.size(), 2u);
+
+    EXPECT_EQ(rows[0]->order, 0u);
+    EXPECT_EQ(rows[0]->entries, std::vector<uint32>{NX40_BELCHER});
+    EXPECT_FALSE(rows[0]->rangedOnly);
+
+    EXPECT_EQ(rows[1]->order, 1u);
+    EXPECT_EQ(rows[1]->entries, std::vector<uint32>{NX40_SLIME});
+    EXPECT_TRUE(rows[1]->rangedOnly);
+
+    for (ScriptedPullStage const* s : rows)
+    {
+        EXPECT_EQ(s->bossEntry, NX40_PATCHWERK);
+        EXPECT_FALSE(s->bodyPull) << s->name;
+    }
+}
+
+TEST(DcScriptedPullTest, Naxx40SlimeCylinderHoldsAllSixteenAndNotTheBelchers)
+{
+    ScriptedPullStage const* slimes = ScriptedPullRegistry::Find(NX40, 1);
+    ASSERT_NE(slimes, nullptr);
+    for (auto const& s : Nx40Slimes())
+        EXPECT_TRUE(ScriptedPullRegistry::InPack(*slimes, s.first, s.second, 294.24f))
+            << s.first << "," << s.second;
+    // Both Sludge Belchers near the pack stay out of it.
+    EXPECT_FALSE(ScriptedPullRegistry::InPack(*slimes, 3132.1f, -3244.1f, 294.2f));
+    EXPECT_FALSE(ScriptedPullRegistry::InPack(*slimes, 3135.6f, -3179.6f, 294.2f));
+
+    ScriptedPullStage const* belcher = ScriptedPullRegistry::Find(NX40, 0);
+    ASSERT_NE(belcher, nullptr);
+    EXPECT_TRUE(ScriptedPullRegistry::InPack(*belcher, 3132.1f, -3244.1f, 294.2f));
+    EXPECT_FALSE(ScriptedPullRegistry::InPack(*belcher, 3135.6f, -3179.6f, 294.2f));
+}
+
+TEST(DcScriptedPullTest, Naxx40StandSpotsTagAtRangeOutsideDetection)
+{
+    float constexpr kOpener = 30.0f;    // ranged opener band
+    float constexpr kDetection = 20.0f; // creature_template.detection_range of both entries
+
+    ScriptedPullStage const* belcher = ScriptedPullRegistry::Find(NX40, 0);
+    ScriptedPullStage const* slimes = ScriptedPullRegistry::Find(NX40, 1);
+    ASSERT_NE(belcher, nullptr);
+    ASSERT_NE(slimes, nullptr);
+
+    float const toBelcher = Nx40Dist(belcher->standX, belcher->standY, 3132.1f, -3244.1f);
+    EXPECT_LT(toBelcher, kOpener);
+    EXPECT_GT(toBelcher, kDetection);
+    EXPECT_GT(NearestSlime(belcher->standX, belcher->standY), kOpener + 5.0f);
+
+    float const toSlime = NearestSlime(slimes->standX, slimes->standY);
+    EXPECT_LT(toSlime, kOpener);
+    EXPECT_GT(toSlime, kDetection);
+}
+
+TEST(DcScriptedPullTest, Naxx40CampIsOutOfCloudReachAndTheArmGateNeverTouchesThePack)
+{
+    ScriptedPullStage const* slimes = ScriptedPullRegistry::Find(NX40, 1);
+    ASSERT_NE(slimes, nullptr);
+    // The ranged need a crawl to shoot at: the camp sits beyond opener range of every slime.
+    EXPECT_GT(NearestSlime(slimes->campX, slimes->campY), 40.0f);
+
+    for (ScriptedPullStage const* s : ScriptedPullRegistry::Rows(NX40))
+    {
+        ASSERT_TRUE(s->HasArmAnchor());
+        EXPECT_TRUE(ScriptedPullRegistry::InArmRange(*s, s->campX, s->campY, s->campZ)) << s->name;
+        // Closest point of the arm circle to any slime is still outside detection.
+        EXPECT_GT(NearestSlime(s->armX, s->armY) - s->armRadius, 20.0f) << s->name;
+    }
+}

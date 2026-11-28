@@ -283,6 +283,22 @@ struct ScriptedPullStage
     {
         return avoidX != 0.0f || avoidY != 0.0f || avoidZ != 0.0f;
     }
+
+    // ONLY THE RANGED DPS FIGHT THIS PACK.
+    //
+    // The default camp fight is anchored but not passive: every follower fights what
+    // reaches the camp. That is wrong for a pack that hurts whoever stands next to it
+    // and is worth more dead on the walk in than tanked at the camp. Set, every
+    // follower that is not ranged DPS (melee, healers, the off-tanks) stays passive
+    // at the camp from the tag until the stage retires; healers keep healing in place
+    // under the "stay" pin, and the ranged shoot the pack down as it crosses to them.
+    // The camp-safety valve still frees everyone (DcPullContext::partyReleased).
+    //
+    // Naxxramas 40's Embalming Slimes are the case: linked, so one tag brings all
+    // sixteen, each pulsing an 8yd Embalming Cloud every two seconds while it crawls
+    // in at ~3yd/s. Ranged killed 13 of them inside 15s in the archived runs; the
+    // melee that walked out to meet them were the deaths.
+    bool rangedOnly{false};
 };
 
 // Vertical tolerance, in yards, for the arm-range test (a bot on the room's floor

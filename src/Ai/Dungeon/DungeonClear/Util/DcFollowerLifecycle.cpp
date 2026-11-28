@@ -472,7 +472,12 @@ void DcFollowerLifecycle::ReapStrandedPassives()
         bool holdPassive = false;
         bool const scoutHold = !released && phase == static_cast<uint32>(DcPullPhase::Idle) &&
                                DcLeaderSignal::GetLeaderCampHold(player, holdCamp, holdPassive) && holdPassive;
-        if (!scoutHold && (!inPull || !DcLeaderSignal::IsPullPhaseHolding(phase) || released))
+        // A ranged-only stage keeps its non-ranged followers passive through Engage
+        // too (ScriptedPullStage::rangedOnly); GetLeaderCampHold applies the pin and
+        // this keeps the reaper from stripping it at the Engage flip.
+        bool const rangedOnlyHold = !released && DcLeaderSignal::IsLeaderRangedOnlyHold(player);
+        if (!scoutHold && !rangedOnlyHold &&
+            (!inPull || !DcLeaderSignal::IsPullPhaseHolding(phase) || released))
         {
             // The graceful pull commit (leader reached camp and flipped to
             // Engage, so inPull is still true) can hold the party passive a

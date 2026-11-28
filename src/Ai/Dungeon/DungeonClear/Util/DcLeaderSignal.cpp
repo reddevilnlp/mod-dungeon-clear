@@ -11,6 +11,7 @@
 #include "DcLeaderElection.h"
 #include "DcZoneLine.h"
 #include "Ai/Dungeon/DungeonClear/Settings/DcSettings.h"
+#include "Ai/Dungeon/DungeonClear/Data/ScriptedPullRegistry.h"
 #include "Ai/Dungeon/DungeonClear/Util/DungeonEventExecutor.h"
 #include <algorithm>
 #include <cmath>
@@ -693,6 +694,22 @@ bool DcLeaderSignal::GetLeaderPullInfo(Player* bot, uint32& phaseOut, Position& 
     campOut = pull.camp;
     return true;
 }
+namespace
+{
+    // See DcLeaderSignal::IsLeaderRangedOnlyHold. `pull` is the leader's context.
+    bool RangedOnlyHolds(Player* bot, DcPullContext const& pull)
+    {
+        if (pull.scriptedStage < 0 || pull.phase == DcPullPhase::Idle || pull.partyReleased)
+            return false;
+        ScriptedPullStage const* const stage = ScriptedPullRegistry::Find(bot->GetMapId(), pull.scriptedStage);
+        if (!stage || !stage->rangedOnly)
+            return false;
+        bool const rangedDps =
+            PlayerbotAI::IsRanged(bot) && !PlayerbotAI::IsHeal(bot) && !PlayerbotAI::IsTank(bot);
+        return !rangedDps;
+    }
+}
+
 bool DcLeaderSignal::GetLeaderCampHold(Player* bot, Position& campOut, bool& passiveOut)
 {
     if (!bot)
@@ -770,10 +787,13 @@ bool DcLeaderSignal::GetLeaderCampHold(Player* bot, Position& campOut, bool& pas
     // maneuver has not yet run its first combat tick to flip Idle -> Returning. See
     // DcPullContext::scoutAggroMs. Not gated on partyReleased — that latch belongs to
     // a previous maneuver until the next Transition clears it.
+    // A ranged-only stage keeps everyone but the ranged DPS passive through the
+    // camp fight as well (ScriptedPullStage::rangedOnly).
     passiveOut = (IsPullPhaseHolding(static_cast<uint32>(pull.phase)) &&
                   !pull.partyReleased) ||
                  (leader->IsInCombat() &&
-                  pull.ScoutAggroHolding(getMSTime(), DC_PULL_SCOUT_AGGRO_HOLD_MS));
+                  pull.ScoutAggroHolding(getMSTime(), DC_PULL_SCOUT_AGGRO_HOLD_MS)) ||
+                 RangedOnlyHolds(bot, pull);
     return true;
 }
 bool DcLeaderSignal::IsLeaderCampFightActive(Player* bot)
@@ -829,6 +849,12 @@ namespace
 bool DcLeaderSignal::IsLeaderScriptedPullActive(Player* bot)
 {
     return LeaderScriptedPull(bot) != nullptr;
+}
+
+bool DcLeaderSignal::IsLeaderRangedOnlyHold(Player* bot)
+{
+    DcPullContext const* const pull = LeaderScriptedPull(bot);
+    return pull && RangedOnlyHolds(bot, *pull);
 }
 
 bool DcLeaderSignal::IsLeaderScriptedCampFight(Player* bot)

@@ -47,6 +47,7 @@
 #include "Ai/Dungeon/DungeonClear/Util/DungeonEventExecutor.h"
 #include "Ai/Dungeon/DungeonClear/Util/ChunkedPathfinder.h"
 #include "Ai/Dungeon/DungeonClear/Util/DcDoorPolicy.h"
+#include "Ai/Dungeon/DungeonClear/Util/DcHazard.h"
 #include "Ai/Dungeon/DungeonClear/Util/DcMovement.h"
 #include "Ai/Dungeon/DungeonClear/Util/NavmeshSnap.h"
 #include "Ai/Dungeon/DungeonClear/Util/DcPathWorker.h"
@@ -2406,8 +2407,12 @@ bool DungeonClearPullManeuverAction::Execute(Event /*event*/)
         // the leash is the one that gives — see DcInGroundEffect. It suppresses the
         // ARM (below) and cancels an armed recall (further down); the predicate goes
         // false the instant the tank is clear, so the leash re-arms by itself if the
-        // step-out left it genuinely out of position.
-        bool const inGroundEffect = DcInGroundEffect(context);
+        // step-out left it genuinely out of position. A hazard emitter's pulse
+        // (DcHazard::NearestVacate) counts as fire here too: the vacate (55) is
+        // what moves the tank out of an Embalming Slime that reached the camp.
+        bool const inGroundEffect =
+            DcInGroundEffect(context) ||
+            (DcSettings::GetBool(bot, "HazardVacate") && DcHazard::NearestVacate(bot).ok);
         if (!pull.scriptedRecall && toCamp > DC_SCRIPTED_PULL_LEASH && !inGroundEffect)
         {
             pull.scriptedRecall = true;

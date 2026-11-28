@@ -492,6 +492,36 @@ namespace
     // between the spawns and the cylinder's authored centre.
     float constexpr MGT_ROT_ZBAND  = 10.0f;
 
+    // NAXXRAMAS 40: THE EMBALMING SLIMES (mod-individual-progression, map 533,
+    // spawnMask 4). Sixteen Embalming Slimes 351026 (level 60 elite, run 0.43, linked:
+    // one tag brings all sixteen) sit between the entrance and Patchwerk, each pulsing
+    // an 8yd Embalming Cloud (28322) every two seconds. Fighting them where they stand,
+    // or letting melee walk out to them, is what killed the party live; the plan is to
+    // tag them at range from the south, haul back to a dry camp ~41yd from the nearest
+    // slime, and let only the ranged DPS fight (`rangedOnly`) while they crawl in.
+    //
+    // Measured against `creature`, IP spawns only:
+    //   camp (3137.1, -3268.5)   nearest slime 361176 (3132.5, -3227.5)  41.3yd
+    //                            Sludge Belcher 361324 (3132.1, -3244.1)  24.9yd
+    //   stand (3133.0, -3257.0)  slime 361176                              29.5yd
+    //                            Sludge Belcher 361324                     12.9yd
+    // The Belcher is why there are two rows: from the slimes' stand spot it is inside
+    // its own 20yd detection, so stage 0 tags it from the camp first. It is 16.6yd from
+    // the nearest slime, outside the assistance reach, and runs away from them.
+    //
+    // The arm anchor sits south of the camp so no point of its 30yd circle comes within
+    // 22yd of a slime: the plan arms as the tank reaches the south floor, never on top of
+    // the pack. The Patchwork Golem formation led by 361161 (15.6yd from the camp) is
+    // ordinary route trash and is fought as the tank arrives.
+    uint32 constexpr NX40_MAP             = 533;
+    uint32 constexpr NX40_PATCHWERK       = 351028;
+    uint32 constexpr NX40_EMBALMING_SLIME = 351026;
+    uint32 constexpr NX40_SLUDGE_BELCHER  = 351029;
+    float constexpr NX40_CAMP_X = 3137.10f, NX40_CAMP_Y = -3268.50f, NX40_CAMP_Z = 294.37f;
+    float constexpr NX40_ARM_X  = 3137.00f, NX40_ARM_Y  = -3280.00f, NX40_ARM_Z  = 294.40f;
+    float constexpr NX40_ARM_R  = 30.0f;
+    float constexpr NX40_ZBAND  = 6.0f;
+
     std::vector<ScriptedPullStage> const& Table()
     {
         static std::vector<ScriptedPullStage> const kStages = []
@@ -648,6 +678,42 @@ namespace
                 s.bodyPull   = r.bodyPull;
                 t.push_back(s);
             }
+
+            // --- Naxxramas 40 (individual progression): the Embalming Slimes ------
+            //
+            // See "NAXXRAMAS 40: THE EMBALMING SLIMES" above for the numbers.
+            ScriptedPullStage belcher;
+            belcher.mapId      = NX40_MAP;
+            belcher.bossEntry  = NX40_PATCHWERK;
+            belcher.order      = 0;
+            belcher.name       = "Naxxramas 40 — Sludge Belcher in front of the slimes";
+            belcher.campX      = NX40_CAMP_X; belcher.campY = NX40_CAMP_Y; belcher.campZ = NX40_CAMP_Z;
+            // The camp is the stand spot: 24.9yd to the Belcher, inside the opener band
+            // and outside its 20yd detection.
+            belcher.standX     = NX40_CAMP_X; belcher.standY = NX40_CAMP_Y; belcher.standZ = NX40_CAMP_Z;
+            belcher.packX      = 3132.10f;    belcher.packY  = -3244.10f;   belcher.packZ  = 294.24f;
+            belcher.packRadius = 5.0f;
+            belcher.packZBand  = NX40_ZBAND;
+            belcher.armX       = NX40_ARM_X;  belcher.armY   = NX40_ARM_Y;  belcher.armZ   = NX40_ARM_Z;
+            belcher.armRadius  = NX40_ARM_R;
+            belcher.entries    = {NX40_SLUDGE_BELCHER};
+            t.push_back(belcher);
+
+            ScriptedPullStage slimes;
+            slimes.mapId      = NX40_MAP;
+            slimes.bossEntry  = NX40_PATCHWERK;
+            slimes.order      = 1;
+            slimes.name       = "Naxxramas 40 — Embalming Slimes";
+            slimes.campX      = NX40_CAMP_X; slimes.campY = NX40_CAMP_Y; slimes.campZ = NX40_CAMP_Z;
+            slimes.standX     = 3133.00f;    slimes.standY = -3257.00f;  slimes.standZ = 294.50f;
+            slimes.packX      = 3133.50f;    slimes.packY  = -3211.50f;  slimes.packZ  = 294.24f;
+            slimes.packRadius = 22.0f;
+            slimes.packZBand  = NX40_ZBAND;
+            slimes.armX       = NX40_ARM_X;  slimes.armY   = NX40_ARM_Y;  slimes.armZ  = NX40_ARM_Z;
+            slimes.armRadius  = NX40_ARM_R;
+            slimes.entries    = {NX40_EMBALMING_SLIME};
+            slimes.rangedOnly = true;
+            t.push_back(slimes);
 
             std::stable_sort(t.begin(), t.end(),
                              [](ScriptedPullStage const& a, ScriptedPullStage const& b)

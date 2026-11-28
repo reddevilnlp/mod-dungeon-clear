@@ -854,6 +854,19 @@ bool DungeonClearCampHoldActionBase::Execute(Event /*event*/)
     if (passive)
         DcFollowerLifecycle::ApplyFollowerPassive(bot);
 
+    // A FOLLOWER INSIDE A HAZARD PULSE LEAVES IT FIRST. The combat-side pin (stay at
+    // camp, 60) outranks the hazard vacate (55), so without this a held follower is
+    // pinned to its slot while an emitter that walked into the camp pulses on it —
+    // an Embalming Slime reaching a ranged-only camp (ScriptedPullStage::rangedOnly)
+    // is the case. Yield the tick and the vacate takes it; the pin resumes once the
+    // bot is clear. The keep-out room still wins: no pulse makes it acceptable.
+    if (!inNoGoRoom && DcSettings::GetBool(bot, "HazardVacate") && DcHazard::NearestVacate(bot).ok)
+    {
+        DC_PULL_DEBUG("[DC:{}] hold-at-camp: inside a hazard pulse -> yielding to the "
+                      "vacate", bot->GetName());
+        return false;
+    }
+
     // Loot yield (scout phase only). The pack dies AT camp, so its corpses sit
     // right where the party holds. Without this the camp hold and the stock loot
     // pipeline fight each other: move-to-loot walks a follower a few yards to a

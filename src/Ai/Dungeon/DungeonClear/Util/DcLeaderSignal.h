@@ -188,6 +188,13 @@ public:
     // room is still full of the pack that has not been pulled.
     static bool IsLeaderScriptedPullActive(Player* bot);
 
+    // True while `bot`'s leader runs a ScriptedPullStage::rangedOnly stage past the
+    // scout (tag, drag and camp fight), the camp-safety valve has not released the
+    // party, and `bot` is not ranged DPS. Such a follower is held PASSIVE at the
+    // camp for the whole stage: GetLeaderCampHold reports it in `passiveOut`, and
+    // DcFollowerLifecycle::ReapStrandedPassives keeps the pin through Engage.
+    static bool IsLeaderRangedOnlyHold(Player* bot);
+
     // The GENERAL "tank is fighting -> the party assists" gate: true when `bot`'s
     // elected leader tank is in combat on an active (enabled, unpaused) run and
     // the party is expected to pile in RIGHT NOW. Includes the advanced-pull camp
