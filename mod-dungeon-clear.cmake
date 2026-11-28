@@ -128,6 +128,7 @@ if (BUILD_TESTING)
             "${MOD_PATH}/t/TestBlackfathomDeeps.cpp"
             "${MOD_PATH}/t/TestStratTrapAlley.cpp"
             "${MOD_PATH}/t/TestClassicRaids.cpp"
+            "${MOD_PATH}/t/TestNaxxramas.cpp"
             "${MOD_PATH}/t/TestDungeonEvent.cpp"
             "${MOD_PATH}/t/TestNavGeometry.cpp"
             "${MOD_PATH}/t/TestSplineWindow.cpp"

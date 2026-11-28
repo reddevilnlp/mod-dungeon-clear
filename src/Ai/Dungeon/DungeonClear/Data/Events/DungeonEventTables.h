@@ -5910,6 +5910,9 @@ void RegisterMoltenCoreRoster(std::vector<BossRosterPatch>& t);
 void RegisterZulGurubRoster(std::vector<BossRosterPatch>& t);
 // Temple of Ahn'Qiraj (531): Ouro, summoned when a player reaches his mound.
 void RegisterTempleOfAhnQirajRoster(std::vector<BossRosterPatch>& t);
+// Naxxramas (533): the Four Horsemen, whose cast-spell credit hides them from
+// BossSpawnIndex. One horseman anchor per difficulty tier (10/25 vs IP 40-man).
+void RegisterNaxxramasRoster(std::vector<BossRosterPatch>& t);
 // Utgarde Pinnacle (575) — the ONE row that makes this dungeon runnable at all
 // (Svala, whose credit entry 26668 is a runtime UpdateEntry target with no spawn
 // row, so BossSpawnIndex drops her silently) plus the three travel objectives the

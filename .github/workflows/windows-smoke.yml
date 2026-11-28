@@ -133,11 +133,24 @@ jobs:
           # pinned packages keep breaking on CI.
 
           # --- Boost 1.87.0 (msvc-14.3, 64-bit) prebuilt -> BOOST_ROOT ---
-          # Direct-download host; the plain /download URL serves an interstitial.
+          # boost.io's own archive first; SourceForge's direct-download host
+          # (the plain /download URL serves an interstitial) as the fallback.
+          # A cold cache (e.g. a fork's first run) hits this, and the
+          # SourceForge host has refused the runner outright.
           if (-not (Test-Path 'C:\local\boost_1_87_0\boost'))
           {
               $boostExe = Join-Path $env:RUNNER_TEMP 'boost.exe'
-              Invoke-WebRequest -Uri 'https://master.dl.sourceforge.net/project/boost/boost-binaries/1.87.0/boost_1_87_0-msvc-14.3-64.exe?viasf=1' -OutFile $boostExe
+              $boostUrls = @(
+                  'https://archives.boost.io/release/1.87.0/binaries/boost_1_87_0-msvc-14.3-64.exe',
+                  'https://master.dl.sourceforge.net/project/boost/boost-binaries/1.87.0/boost_1_87_0-msvc-14.3-64.exe?viasf=1'
+              )
+              $boostOk = $false
+              foreach ($boostUrl in $boostUrls)
+              {
+                  try { Invoke-WebRequest -Uri $boostUrl -OutFile $boostExe -UserAgent 'Mozilla/5.0'; $boostOk = $true; break }
+                  catch { Write-Warning "Boost download from $boostUrl failed: $($_.Exception.Message)" }
+              }
+              if (-not $boostOk) { throw 'Boost installer download failed from every mirror.' }
               $boostMB = (Get-Item $boostExe).Length / 1MB
               Write-Host ("Downloaded Boost installer: {0:N1} MB" -f $boostMB)
               if ($boostMB -lt 50) { throw "Boost installer download looks wrong ($([int]$boostMB) MB) - likely an HTML page." }

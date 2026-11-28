@@ -1051,3 +1051,8 @@ AC_ADD_CONFIG_FILE("${CMAKE_CURRENT_LIST_DIR}/conf/mod_dungeon_clear.conf.dist")
 #    dropped them: Zul'Gurub's High Priestess Arlokk, summoned by the Gong of
 #    Bethekk, and Temple of Ahn'Qiraj's Ouro, summoned when a player reaches his
 #    mound. Each gets a boss anchor on its trigger plus a repeatable event.)
+
+# New files added: Data/Events/NaxxramasEvents.cpp, t/TestNaxxramas.cpp
+#   (Naxxramas, map 533: the Four Horsemen, whose cast-spell credit hides them
+#    from BossSpawnIndex. One MakeBossWithBit row on bit 8 per tier: Baron
+#    Rivendare on 10/25-man, Highlord Mograine on Individual Progression's 40.)
